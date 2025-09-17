@@ -80,4 +80,4 @@ Este repositório reúne scripts desenvolvidos para **padronizar, qualificar e a
 
 ---
 
-✍️ Desenvolvido pelo **GT-Chagas / CGZV / DEIDT / SVS / MS**
+✍️ Desenvolvido por **Milton Martins de Lima Neto / GT-Chagas**
