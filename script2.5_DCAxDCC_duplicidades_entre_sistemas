@@ -1,0 +1,230 @@
+# --- 1) Pacotes ---
+pacotes <- c("dplyr", "readr", "stringr", "lubridate", "openxlsx",
+             "stringdist", "stringi", "purrr")
+novos <- pacotes[!(pacotes %in% installed.packages()[,"Package"])]
+if (length(novos)) install.packages(novos, dependencies = TRUE)
+invisible(lapply(pacotes, library, character.only = TRUE))
+
+# --- 2) Parâmetros ---
+LIMIAR_SIMILARIDADE       <- 0.95  # Jaro-Winkler mínimo p/ nome do paciente
+LIMIAR_SIMILARIDADE_MAE   <- 0.95  # Jaro-Winkler mínimo p/ nome da mãe
+
+# --- 3) Seleção de arquivos de entrada (CSV, UTF-8, ;) ---
+message("Selecione o ARQUIVO DCC (.csv)")
+arq_dcc <- file.choose()
+message("Selecione o ARQUIVO DCA (.csv)")
+arq_dca <- file.choose()
+
+# --- 4) Diretório de saída ---
+dir_base <- dirname(arq_dcc)
+dir_out  <- file.path(dir_base, "DCC_vs_DCA")
+dir.create(dir_out, showWarnings = FALSE)
+
+# --- 5) Leitura padronizada ---
+ler_csv_padrao <- function(caminho) {
+  readr::read_delim(
+    caminho,
+    delim = ";",
+    locale = locale(encoding = "UTF-8"),
+    show_col_types = FALSE,
+    trim_ws = TRUE
+  )
+}
+
+dcc_raw <- ler_csv_padrao(arq_dcc)
+dca_raw <- ler_csv_padrao(arq_dca)
+
+# --- 6) Funções auxiliares ---
+normaliza_nome <- function(x) {
+  # aceita NA; mantém NA
+  if (all(is.na(x))) return(x)
+  x %>%
+    stringr::str_replace_all("[^\\p{L} ]+", " ") %>%
+    stringr::str_squish() %>%
+    stringi::stri_trans_general("Latin-ASCII") %>%
+    stringr::str_to_lower()
+}
+
+parse_data_segura <- function(x) {
+  suppressWarnings(lubridate::dmy(x))
+}
+
+sim_jw <- function(a, b) {
+  ifelse(is.na(a) | is.na(b), NA_real_, stringdist::stringsim(a, b, method = "jw"))
+}
+
+fmt_date <- function(x) ifelse(is.na(x), NA_character_, format(x, "%d/%m/%Y"))
+
+# --- 7) Checagem de colunas obrigatórias ---
+campos_req <- c("NM_PACIENT", "DT_NASC", "DT_NOTIFIC", "NU_NOTIFIC")
+faltam_dcc <- setdiff(campos_req, names(dcc_raw))
+faltam_dca <- setdiff(campos_req, names(dca_raw))
+if (length(faltam_dcc) > 0) stop("No DCC faltam as colunas: ", paste(faltam_dcc, collapse = ", "))
+if (length(faltam_dca) > 0) stop("No DCA faltam as colunas: ", paste(faltam_dca, collapse = ", "))
+
+# --- 8) Preparação dos bancos ---
+# Flags de campos opcionais
+tem_SG_UF_dcc        <- "SG_UF"       %in% names(dcc_raw)
+tem_CD_MN_RESI_dcc   <- "CD_MN_RESI"  %in% names(dcc_raw)   # DCC usa CD_MN_RESI
+tem_NM_MAE_dcc       <- "NM_MAE_PAC"  %in% names(dcc_raw)
+
+tem_SG_UF_dca        <- "SG_UF"       %in% names(dca_raw)
+tem_ID_MN_RESI_dca   <- "ID_MN_RESI"  %in% names(dca_raw)   # DCA mantém ID_MN_RESI
+tem_NM_MAE_dca       <- "NM_MAE_PAC"  %in% names(dca_raw)
+
+dcc <- dcc_raw %>%
+  mutate(
+    NM_PACIENT_norm = normaliza_nome(NM_PACIENT),
+    NM_MAE_norm     = if (tem_NM_MAE_dcc) normaliza_nome(NM_MAE_PAC) else NA_character_,
+    DT_NASC_date    = parse_data_segura(DT_NASC),
+    DT_NOTIFIC_date = parse_data_segura(DT_NOTIFIC),
+    SG_UF           = if (tem_SG_UF_dcc) SG_UF else NA_character_,
+    CD_MN_RESI      = if (tem_CD_MN_RESI_dcc) CD_MN_RESI else NA_character_
+  ) %>%
+  filter(!is.na(NM_PACIENT_norm), !is.na(DT_NASC_date))
+
+dca <- dca_raw %>%
+  mutate(
+    NM_PACIENT_norm = normaliza_nome(NM_PACIENT),
+    NM_MAE_norm     = if (tem_NM_MAE_dca) normaliza_nome(NM_MAE_PAC) else NA_character_,
+    DT_NASC_date    = parse_data_segura(DT_NASC),
+    DT_NOTIFIC_date = parse_data_segura(DT_NOTIFIC),
+    SG_UF           = if (tem_SG_UF_dca) SG_UF else NA_character_,
+    ID_MN_RESI      = if (tem_ID_MN_RESI_dca) ID_MN_RESI else NA_character_
+  ) %>%
+  filter(!is.na(NM_PACIENT_norm), !is.na(DT_NASC_date))
+
+# --- 9) Seleção de colunas e renomeação para sufixos claros ---
+base_dcc_sel <- dcc %>%
+  select(NU_NOTIFIC, NM_PACIENT, NM_PACIENT_norm, NM_MAE_norm,
+         DT_NASC, DT_NASC_date, DT_NOTIFIC, DT_NOTIFIC_date, SG_UF, CD_MN_RESI) %>%
+  rename(
+    NU_NOTIFIC_DCC       = NU_NOTIFIC,
+    NM_PACIENT_DCC       = NM_PACIENT,
+    NM_PACIENT_norm_DCC  = NM_PACIENT_norm,
+    NM_MAE_norm_DCC      = NM_MAE_norm,
+    DT_NASC_DCC          = DT_NASC,
+    DT_NASC_date_DCC     = DT_NASC_date,
+    DT_NOTIFIC_DCC_raw   = DT_NOTIFIC,
+    DT_NOTIFIC_date_DCC  = DT_NOTIFIC_date,
+    SG_UF_DCC            = SG_UF,
+    CD_MN_RESI_DCC       = CD_MN_RESI
+  )
+
+base_dca_sel <- dca %>%
+  select(NU_NOTIFIC, NM_PACIENT, NM_PACIENT_norm, NM_MAE_norm,
+         DT_NASC, DT_NASC_date, DT_NOTIFIC, DT_NOTIFIC_date, SG_UF, ID_MN_RESI) %>%
+  rename(
+    NU_NOTIFIC_DCA       = NU_NOTIFIC,
+    NM_PACIENT_DCA       = NM_PACIENT,
+    NM_PACIENT_norm_DCA  = NM_PACIENT_norm,
+    NM_MAE_norm_DCA      = NM_MAE_norm,
+    DT_NASC_DCA          = DT_NASC,
+    DT_NASC_date_DCA     = DT_NASC_date,
+    DT_NOTIFIC_DCA_raw   = DT_NOTIFIC,
+    DT_NOTIFIC_date_DCA  = DT_NOTIFIC_date,
+    SG_UF_DCA            = SG_UF,
+    ID_MN_RESI_DCA       = ID_MN_RESI
+  )
+
+# --- 10) BLOQUEIO por DT_NASC com tolerância ±1 dia ---
+# a) match exato
+j_exato <- dplyr::inner_join(
+  base_dcc_sel, base_dca_sel,
+  by = c("DT_NASC_date_DCC" = "DT_NASC_date_DCA"),
+  keep = TRUE, relationship = "many-to-many"
+) %>% dplyr::mutate(DIFF_DIAS_DT_NASC = 0L)
+
+# b) dcc +1 dia = dca
+j_plus1 <- base_dcc_sel %>%
+  dplyr::mutate(DT_NASC_date_shift = DT_NASC_date_DCC + lubridate::days(1)) %>%
+  dplyr::inner_join(
+    base_dca_sel,
+    by = c("DT_NASC_date_shift" = "DT_NASC_date_DCA"),
+    keep = TRUE, relationship = "many-to-many"
+  ) %>%
+  dplyr::mutate(DIFF_DIAS_DT_NASC = 1L) %>%
+  dplyr::select(-DT_NASC_date_shift)
+
+# c) dcc -1 dia = dca
+j_minus1 <- base_dcc_sel %>%
+  dplyr::mutate(DT_NASC_date_shift = DT_NASC_date_DCC - lubridate::days(1)) %>%
+  dplyr::inner_join(
+    base_dca_sel,
+    by = c("DT_NASC_date_shift" = "DT_NASC_date_DCA"),
+    keep = TRUE, relationship = "many-to-many"
+  ) %>%
+  dplyr::mutate(DIFF_DIAS_DT_NASC = -1L) %>%
+  dplyr::select(-DT_NASC_date_shift)
+
+candidatos_raw <- dplyr::bind_rows(j_exato, j_plus1, j_minus1)
+
+# Remover duplicatas idênticas (mesmo par DCC-DCA), priorizando o match exato
+candidatos_raw <- candidatos_raw %>%
+  dplyr::arrange(abs(DIFF_DIAS_DT_NASC)) %>%  # 0 primeiro, depois 1
+  dplyr::distinct(NU_NOTIFIC_DCC, NU_NOTIFIC_DCA, .keep_all = TRUE)
+
+# --- 11) Similaridade de nome (paciente + mãe) e filtro por limiares ---
+candidatos <- candidatos_raw %>%
+  dplyr::mutate(
+    SIM_NOME = sim_jw(NM_PACIENT_norm_DCC, NM_PACIENT_norm_DCA),
+    SIM_MAE  = sim_jw(NM_MAE_norm_DCC,     NM_MAE_norm_DCA)
+  ) %>%
+  # exige SIM_NOME >= limiar; para mãe, só exige se houver ambos os nomes
+  dplyr::filter(!is.na(SIM_NOME) & SIM_NOME >= LIMIAR_SIMILARIDADE) %>%
+  dplyr::filter(is.na(SIM_MAE) | SIM_MAE >= LIMIAR_SIMILARIDADE_MAE)
+
+# --- 12) Montagem do resultado + padding de NU_NOTIFIC ---
+resultado <- candidatos %>%
+  dplyr::transmute(
+    NU_NOTIFIC_DCC = stringr::str_pad(as.character(NU_NOTIFIC_DCC), width = 14, pad = "0"),
+    NU_NOTIFIC_DCA = stringr::str_pad(as.character(NU_NOTIFIC_DCA), width = 7,  pad = "0"),
+    NM_PACIENT_DCC,
+    NM_PACIENT_DCA,
+    DT_NASC_DCC    = fmt_date(DT_NASC_date_DCC),
+    DT_NASC_DCA    = fmt_date(DT_NASC_date_DCA),
+    DIFF_DIAS_DT_NASC,  # -1, 0, +1 (sinal = DCC - DCA)
+    DT_NOTIFIC_DCC = fmt_date(DT_NOTIFIC_date_DCC),
+    DT_NOTIFIC_DCA = fmt_date(DT_NOTIFIC_date_DCA),
+    SG_UF_DCC,
+    CD_MN_RESI_DCC,     # DCC: código do município de residência
+    SG_UF_DCA,
+    ID_MN_RESI_DCA,     # DCA: ID do município de residência (mantido)
+    SIMILARIDADE_NOME = round(SIM_NOME * 100, 2),
+    SIMILARIDADE_MAE  = round(SIM_MAE  * 100, 2)
+  ) %>%
+  dplyr::arrange(dplyr::desc(SIMILARIDADE_NOME), dplyr::desc(SIMILARIDADE_MAE),
+                 DIFF_DIAS_DT_NASC, NU_NOTIFIC_DCC)
+
+# --- 13) Exportação ---
+arq_xlsx <- file.path(dir_out, "possiveis_duplicadas_DCC_vs_DCA.xlsx")
+arq_csv  <- file.path(dir_out, "possiveis_duplicadas_DCC_vs_DCA.csv")
+
+# 13.1 XLSX com colunas NU_* forçadas a Texto
+wb <- openxlsx::createWorkbook()
+openxlsx::addWorksheet(wb, "DCC_vs_DCA")
+openxlsx::writeData(wb, "DCC_vs_DCA", resultado)
+
+textStyle <- openxlsx::createStyle(numFmt = "@")  # Texto
+if (nrow(resultado) > 0) {
+  openxlsx::addStyle(
+    wb, sheet = "DCC_vs_DCA", style = textStyle,
+    rows = 2:(nrow(resultado) + 1), cols = c(1, 2), gridExpand = TRUE
+  )
+}
+openxlsx::saveWorkbook(wb, arq_xlsx, overwrite = TRUE)
+
+# 13.2 CSV com ; e BOM
+readr::write_excel_csv2(resultado, arq_csv)
+
+# --- 14) Log no console ---
+message("Total DCC lidos: ", nrow(dcc_raw),
+        " | Após preparo (nome e DT_NASC válidos): ", nrow(dcc))
+message("Total DCA lidos: ", nrow(dca_raw),
+        " | Após preparo (nome e DT_NASC válidos): ", nrow(dca))
+message("Candidatos (match por DT_NASC ±1 dia): ", nrow(candidatos_raw))
+message("Possíveis duplicatas (nome >= ", LIMIAR_SIMILARIDADE,
+        " & mae >= ", LIMIAR_SIMILARIDADE_MAE, " quando disponível): ", nrow(resultado))
+message("Arquivos salvos em: ", dir_out,
+        "\n- ", basename(arq_xlsx),
+        "\n- ", basename(arq_csv))
