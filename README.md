@@ -23,6 +23,30 @@ Este repositório reúne scripts desenvolvidos para **padronizar, qualificar e a
 - Sugere exclusão via coluna `EXCLUIR`, priorizando AC_NOT e completude
 - Exporta base consolidada e base apenas de duplicatas
 
+### 2.5) Exclusivo — DCC × DCA (SINAN/DATASUS) (`scripts/script2_5_dcc_vs_dca.R`)
+> ⚠️ Uso **restrito** a gestores federais e/ou usuários **autorizados** com acesso à base de **DCA (SINAN)** via **DATASUS**. **Não** publique saídas com dados pessoais/sensíveis.
+
+**Objetivo.** Identificar possíveis duplicidades **intersistemas** quando um mesmo indivíduo aparece no **e-SUS Notifica (DCC)** e no **SINAN (DCA)**, evitando dupla contagem e apoiando a exclusão/ajuste na base de DCC conforme a Nota.
+
+**Entradas.**
+- `DCC` padronizado (CSV, UTF-8 BOM, `;`)
+- `DCA` (SINAN) com acesso autorizado (CSV, UTF-8 BOM, `;`)
+
+**Método (resumo).**
+- Pré-processamento: normalização de nomes (remoção de acentos/ruído), datas parseadas.
+- **Bloqueio por data de nascimento (DT_NASC)** com tolerância **±1 dia** (match exato, +1, −1).
+- **Similaridade Jaro-Winkler** mínima (padrão **0,95** para paciente; **0,95** para mãe quando disponível).
+- Montagem do resultado com `NU_NOTIFIC_DCC` (14 dígitos), `NU_NOTIFIC_DCA` (7 dígitos), nomes, **UF/município**, datas e **percentuais de similaridade**.
+
+**Saídas.**
+- `DCC_vs_DCA/possiveis_duplicadas_DCC_vs_DCA.xlsx` (NU_* formatados como **Texto**)
+- `DCC_vs_DCA/possiveis_duplicadas_DCC_vs_DCA.csv` (com **;** e **BOM**)
+
+**Notas.**
+- **LGPD**: conteúdo sensível; use apenas em ambiente seguro. Não subir bases/saídas com dados pessoais para repositórios públicos.
+- Parâmetros de similaridade (`LIMIAR_SIMILARIDADE`, `LIMIAR_SIMILARIDADE_MAE`) são configuráveis no cabeçalho do script.
+
+
 ### Script 3 – Consolidação por UF
 - Gera uma pasta `consolidado_por_uf` com arquivos Excel (`.xlsx`) por Unidade Federativa
 - Cada arquivo contém abas temáticas:
@@ -50,7 +74,7 @@ Este repositório reúne scripts desenvolvidos para **padronizar, qualificar e a
 3. Execute o **Script 3**, selecionando os arquivos via janela, para gerar as planilhas por UF.
 
 ## Observações
-- **Proteção de dados (LGPD):** os scripts utilizam variáveis anonimizadas (ex.: `ANO_NASC`, `NU_IDADE_N`), preservando informações pessoais sensíveis.
+- **Proteção de dados (LGPD):** os scripts utilizam variáveis anonimizadas e não anonimizadas, e o arquivo de entrada deve 
 - **Transparência:** recomenda-se versionar e documentar cada execução (data, UF, hash da base de entrada).
 - **Auditoria:** guardar sempre as bases de entrada e saída.
 
