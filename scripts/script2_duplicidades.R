@@ -1,169 +1,201 @@
-# =========================
-# Script 2 — Duplicidades no DCC (e-SUS Notifica)
-# Seleção via janelas (abrir/salvar) e exportação CSV com UTF-8 BOM
-# Análise de duplicatas entre registros no próprio e-SUS Notifica
-# =========================
-
-# --- 1. Pacotes ---
+# ============================================================
+# 1. PACOTES
+# ============================================================
 packages <- c(
-  "dplyr", "readr", "stringr", "lubridate", "openxlsx",
-  "stringdist", "stringi", "purrr", "tibble", "igraph", "fuzzyjoin", "svDialogs"
+  "dplyr", "readxl", "writexl", "readr", "stringr", 
+  "stringi", "stringdist", "purrr", "tibble", "igraph", "tools"
 )
-new_pkgs <- packages[!(packages %in% installed.packages()[, "Package"])]
-if (length(new_pkgs)) install.packages(new_pkgs, dependencies = TRUE)
-invisible(lapply(packages, library, character.only = TRUE))
 
-# --- 2. Seleção do arquivo de entrada (CSV padronizado do Script 1) ---
-message("Selecione o arquivo DCC padronizado (CSV; UTF-8 BOM; ;)")
-arquivo <- svDialogs::dlgOpen(title = "Abrir DCC padronizado (.csv)")$res
-if (is.null(arquivo) || arquivo == "") stop("Operação cancelada: arquivo DCC não selecionado.")
+invisible(lapply(packages, function(pkg) {
+  if (!require(pkg, character.only = TRUE)) install.packages(pkg)
+  library(pkg, character.only = TRUE)
+}))
 
-# Sugerir nomes de saída com base no arquivo de entrada
-dir_base <- dirname(arquivo)
-base_nome <- tools::file_path_sans_ext(basename(arquivo))
-sug_final <- file.path(dir_base, paste0(base_nome, "-PadronizadoEduplicatas.csv"))
-sug_dups  <- file.path(dir_base, paste0(base_nome, "-SomenteDuplicatas.csv"))
+# ============================================================
+# 2. SELEÇÃO INTERATIVA DE ARQUIVO
+# ============================================================
+message("-------------------------------------------------------")
+message(">>> SELECIONE A BASE (Pode ser .csv ou .xlsx) <<<")
+message("-------------------------------------------------------")
+Sys.sleep(1)
 
-message("Escolha ONDE salvar a base COMPLETA (com marcações) em CSV...")
-saida_final <- svDialogs::dlgSave(title = "Salvar base completa (.csv)", default = sug_final)$res
-if (is.null(saida_final) || saida_final == "") stop("Operação cancelada: saída CSV (completa) não informada.")
-if (!grepl("\\.csv$", tolower(saida_final)))  saida_final <- paste0(saida_final, ".csv")
+arquivo <- file.choose()
 
-message("Escolha ONDE salvar a base SOMENTE DUPLICATAS em CSV...")
-saida_duplicatas <- svDialogs::dlgSave(title = "Salvar somente duplicatas (.csv)", default = sug_dups)$res
-if (is.null(saida_duplicatas) || saida_duplicatas == "") stop("Operação cancelada: saída CSV (duplicatas) não informada.")
-if (!grepl("\\.csv$", tolower(saida_duplicatas))) saida_duplicatas <- paste0(saida_duplicatas, ".csv")
+dir_saida <- dirname(arquivo)
+nome_base <- file_path_sans_ext(basename(arquivo))
+extensao  <- tolower(file_ext(arquivo))
 
-# --- 3. Ler os dados ---
-dados <- readr::read_delim(
-  arquivo, delim = ";",
-  locale = readr::locale(encoding = "UTF-8"),
-  col_types = readr::cols(.default = readr::col_character()),
-  show_col_types = FALSE
-) %>% dplyr::mutate(id_linha = dplyr::row_number())
+# Definição dos caminhos para XLSX e CSV
+saida_final_xlsx <- file.path(dir_saida, paste0(nome_base, "-Duplicadas_Processado.xlsx"))
+saida_final_csv  <- file.path(dir_saida, paste0(nome_base, "-Duplicadas_Processado.csv"))
+saida_dup_xlsx   <- file.path(dir_saida, paste0(nome_base, "-SomenteDuplicatas.xlsx"))
+saida_dup_csv    <- file.path(dir_saida, paste0(nome_base, "-SomenteDuplicatas.csv"))
 
-# --- 4. Normalizar nome e CPF ---
+cat("\n--- Arquivos de Saída configurados (XLSX e CSV) ---\n")
+
+# ============================================================
+# 3. LEITURA E LIMPEZA DE ENCODING
+# ============================================================
+cat("Lendo arquivo e tratando colunas...\n")
+
+if (extensao %in% c("xlsx", "xls")) {
+  dados <- read_excel(arquivo, col_types = "text")
+} else {
+  dados <- read_delim(
+    arquivo, 
+    delim = ";", 
+    locale = locale(encoding = "UTF-8"),
+    col_types = cols(.default = col_character())
+  )
+}
+
+dados <- dados %>% mutate(id_linha = row_number())
+
+cat("Corrigindo encoding de caracteres...\n")
 dados <- dados %>%
-  dplyr::mutate(
-    NM_PACIENT_NORM = stringr::str_to_upper(stringi::stri_trans_general(NM_PACIENT, "Latin-ASCII")),
-    NUM_CPF_LIMPO   = stringr::str_remove_all(NUM_CPF, "[^0-9]")
+  mutate(across(where(is.character), ~iconv(., from = "UTF-8", to = "UTF-8", sub = "")))
+
+cat("Normalizando nomes e CPF para busca...\n")
+dados <- dados %>%
+  mutate(
+    NM_PACIENT_NORM = str_to_upper(stri_trans_general(NM_PACIENT, "Latin-ASCII")),
+    NM_MAE_NORM     = str_to_upper(stri_trans_general(NM_MAE_PAC, "Latin-ASCII")),
+    NUM_CPF_LIMPO   = str_remove_all(NUM_CPF, "[^0-9]")
   )
 
-# --- 5. Duplicatas por CPF ---
-grupo_cpf <- dados %>%
-  dplyr::filter(!is.na(NUM_CPF_LIMPO) & NUM_CPF_LIMPO != "") %>%
-  dplyr::group_by(NUM_CPF_LIMPO) %>%
-  dplyr::filter(dplyr::n() > 1) %>%
-  dplyr::summarise(pares = list(combn(id_linha, 2, simplify = FALSE)), .groups = "drop") %>%
-  dplyr::pull(pares) %>%
-  unlist(recursive = FALSE)
+# ============================================================
+# 4. FUNÇÕES AUXILIARES NA-SAFE
+# ============================================================
+sim_ok <- function(a, b, lim) {
+  if (is.na(a) || is.na(b)) return(0)
+  if (stringdist::stringsim(a, b, method = "jw") >= lim) 1 else 0
+}
 
-# --- 6. Duplicatas por NU_NOTIFIC ---
-grupo_nu <- dados %>%
-  dplyr::filter(!is.na(NU_NOTIFIC) & NU_NOTIFIC != "") %>%
-  dplyr::group_by(NU_NOTIFIC) %>%
-  dplyr::filter(dplyr::n() > 1) %>%
-  dplyr::summarise(pares = list(combn(id_linha, 2, simplify = FALSE)), .groups = "drop") %>%
-  dplyr::pull(pares) %>%
-  unlist(recursive = FALSE)
+eq_ok <- function(a, b) {
+  if (is.na(a) || is.na(b)) return(0)
+  if (a == b) 1 else 0
+}
 
-# --- 7. Duplicatas por nome semelhante + DT_NASC + SG_UF + município ---
-possiveis_chaves <- dados %>%
-  dplyr::filter(!is.na(NM_PACIENT_NORM), !is.na(DT_NASC), !is.na(SG_UF), !is.na(ID_MN_RESI))
+cpf_ok <- function(a, b) {
+  if (is.na(a) || is.na(b) || a == "" || b == "") return(0)
+  if (a == b) 1 else 0
+}
 
-grupo_nome <- possiveis_chaves %>%
-  dplyr::group_by(SG_UF, ID_MN_RESI, DT_NASC) %>%
-  dplyr::group_split() %>%
-  purrr::map_dfr(function(grupo) {
-    if (nrow(grupo) < 2) return(tibble::tibble())
-    fuzzyjoin::stringdist_inner_join(
-      grupo, grupo,
-      by = "NM_PACIENT_NORM",
-      max_dist = 2,
-      method = "jw"
-    ) %>%
-      dplyr::filter(id_linha.x < id_linha.y) %>%
-      dplyr::select(id_linha.x, id_linha.y)
-  }) %>%
-  purrr::pmap(~ c(..1, ..2))
+# ============================================================
+# 5. SCORE DE DUPLICIDADE
+# ============================================================
+score_duplicidade <- function(a, b) {
+  score <- 0
+  score <- score + 4 * cpf_ok(a$NUM_CPF_LIMPO, b$NUM_CPF_LIMPO)
+  score <- score + 3 * sim_ok(a$NM_PACIENT_NORM, b$NM_PACIENT_NORM, 0.97)
+  score <- score + 3 * sim_ok(a$NM_MAE_NORM, b$NM_MAE_NORM, 0.97)
+  score <- score + 3 * eq_ok(a$DT_NASC, b$DT_NASC)
+  score <- score + 1 * eq_ok(a$SG_UF_NOT, b$SG_UF_NOT)
+  score <- score + 1 * eq_ok(a$ID_MUNICIP, b$ID_MUNICIP)
+  score <- score + 1 * eq_ok(a$ID_PAIS, b$ID_PAIS)
+  score
+}
 
-# --- 8. Unir todos os pares e formar grupos com grafo ---
-todos_pares <- c(grupo_cpf, grupo_nu, grupo_nome)
-
-if (length(todos_pares) > 0 && length(unlist(todos_pares)) > 0) {
-  pares_strings <- lapply(todos_pares, function(par) as.character(par))
-  grafo <- igraph::make_graph(unlist(pares_strings), directed = FALSE)
-  grupos_conectados <- igraph::components(grafo)
-  ids_combinados <- tibble::tibble(
-    id_linha = as.integer(names(grupos_conectados$membership)),
-    grupo_id = as.integer(grupos_conectados$membership)
+# ============================================================
+# 6. BLOQUEIO (OTIMIZAÇÃO)
+# ============================================================
+cat("Gerando blocos de comparação...\n")
+candidatos <- dados %>%
+  filter(!is.na(DT_NASC) | !is.na(NUM_CPF_LIMPO)) %>%
+  group_by(
+    coalesce(SG_UF_NOT, "X"),
+    coalesce(ID_MUNICIP, "X"),
+    coalesce(DT_NASC, "X")
   ) %>%
-    dplyr::group_by(grupo_id) %>%
-    dplyr::mutate(ID_DUPLICATA = paste0(dplyr::cur_group_id(), "_DC")) %>%
-    dplyr::ungroup()
+  group_split()
+
+# ============================================================
+# 7. DETECTAR DUPLICATAS (SCORE >= 9)
+# ============================================================
+cat("Calculando similaridade...\n")
+pares_confirmados <- map_dfr(candidatos, function(grp) {
+  if (nrow(grp) < 2) return(tibble())
+  combn(seq_len(nrow(grp)), 2, simplify = FALSE) %>%
+    map_dfr(function(idx) {
+      a <- grp[idx[1], ]; b <- grp[idx[2], ]
+      score <- score_duplicidade(a, b)
+      if (score >= 9) tibble(id1 = a$id_linha, id2 = b$id_linha, SCORE_DUP = score) else tibble()
+    })
+})
+
+# ============================================================
+# 8. GERAR ID_DUPLICATA VIA GRAFO
+# ============================================================
+if (nrow(pares_confirmados) > 0) {
+  g <- igraph::graph_from_data_frame(pares_confirmados %>% select(id1, id2), directed = FALSE)
+  comp <- igraph::components(g)
+  ids_dup <- tibble(id_linha = as.integer(names(comp$membership)), grupo = comp$membership) %>%
+    group_by(grupo) %>%
+    mutate(ID_DUPLICATA = paste0("DC_", cur_group_id())) %>%
+    ungroup() %>%
+    select(id_linha, ID_DUPLICATA)
 } else {
-  ids_combinados <- tibble::tibble(id_linha = integer(), ID_DUPLICATA = character())
+  ids_dup <- tibble(id_linha = integer(), ID_DUPLICATA = character())
 }
 
-# --- 9. Função para avaliar completude de linha ---
-contar_completude <- function(linha) {
-  linha_utf8 <- iconv(linha, from = "", to = "UTF-8", sub = "byte")
-  sum(!is.na(linha_utf8) & trimws(linha_utf8) != "")
-}
+# ============================================================
+# 9. COMPLETUDE E MARCAÇÃO
+# ============================================================
+cat("Calculando completude e aplicando regras de exclusão...\n")
+matriz_char <- as.matrix(dados %>% select(where(is.character)))
+completude_vetor <- rowSums(!is.na(matriz_char) & trimws(matriz_char) != "")
 
-# --- 10. Aplicar ID_DUPLICATA e marcar EXCLUIR inicialmente ---
 duplicatas_marcadas <- dados %>%
-  dplyr::left_join(ids_combinados, by = "id_linha") %>%
-  dplyr::rowwise() %>%
-  dplyr::mutate(score = contar_completude(dplyr::c_across(where(is.character)))) %>%
-  dplyr::ungroup() %>%
-  dplyr::group_by(ID_DUPLICATA) %>%
-  dplyr::mutate(
-    prioridade = ifelse(!is.na(AC_NOT) & AC_NOT != "", 1, 2),
-    EXCLUIR = ifelse(rank(prioridade, ties.method = "first") == 1, "0", "1")
+  left_join(ids_dup, by = "id_linha") %>%
+  mutate(
+    COMPLETUDE = completude_vetor,
+    # NOVA LÓGICA DE DATA: Tenta os formatos em cascata. Se for texto inválido, vira NA (sem dar erro).
+    DT_NOTIFIC_fmt = coalesce(
+      as.Date(DT_NOTIFIC, format = "%Y-%m-%d"),
+      as.Date(DT_NOTIFIC, format = "%d/%m/%Y"),
+      as.Date(DT_NOTIFIC, format = "%Y/%m/%d"),
+      as.Date(DT_NOTIFIC, format = "%d-%m-%Y")
+    ),
+    # Variável auxiliar: 0 = preenchido, 1 = vazio
+    AC_NOT_vazio = ifelse(is.na(AC_NOT) | trimws(AC_NOT) == "", 1, 0)
   ) %>%
-  dplyr::ungroup() %>%
-  dplyr::mutate(EXCLUIR = ifelse(is.na(ID_DUPLICATA), "", EXCLUIR))
+  group_by(ID_DUPLICATA) %>%
+  # A ordenação define a hierarquia. A "melhor" fica no topo (linha 1). As que descem recebem EXCLUIR = 1
+  arrange(
+    ID_DUPLICATA,     # Mantém o grupo de duplicatas junto
+    DT_NOTIFIC_fmt,   # 1º: Menor data (antiga) sobe. Mais recente (ou NA) desce para ser excluída.
+    AC_NOT_vazio,     # 2º: 0 (preenchido) sobe. 1 (vazio) desce para ser excluída.
+    desc(COMPLETUDE)  # 3º: Maior completude sobe. Menor completude desce para ser excluída.
+  ) %>%
+  mutate(
+    # A primeira linha fica com 0 (manter). Da linha 2 em diante recebe 1 (sugerir exclusão).
+    EXCLUIR = ifelse(!is.na(ID_DUPLICATA) & row_number() > 1, "1", "0")
+  ) %>%
+  ungroup() %>%
+  mutate(
+    EXCLUIR = ifelse(is.na(ID_DUPLICATA), "", EXCLUIR)
+  ) %>%
+  arrange(id_linha) %>% # Devolve a tabela na mesma ordem original do arquivo
+  select(
+    -NM_PACIENT_NORM, -NM_MAE_NORM, -COMPLETUDE, 
+    -id_linha, -NUM_CPF_LIMPO, -DT_NOTIFIC_fmt, -AC_NOT_vazio
+  )
 
-# --- 11. Regra final: manter CPF dominante em cada grupo ---
-verificar_cpfs_grupo <- function(df_grupo) {
-  if (nrow(df_grupo) <= 1) return(df_grupo)
+# ============================================================
+# 10. EXPORTAÇÃO DUPLA (XLSX E CSV COM PONTO E VÍRGULA)
+# ============================================================
+cat("Exportando arquivos finais em múltiplos formatos...\n")
 
-  cpfs_validos <- df_grupo$NUM_CPF_LIMPO[!is.na(df_grupo$NUM_CPF_LIMPO) & df_grupo$NUM_CPF_LIMPO != ""]
-  if (length(cpfs_validos) == 0) return(df_grupo)  # todos NA/vazios → mantém
+# --- 10.1 Exportação XLSX ---
+write_xlsx(duplicatas_marcadas, saida_final_xlsx)
+duplicatas_marcadas %>% filter(!is.na(ID_DUPLICATA)) %>% write_xlsx(saida_dup_xlsx)
 
-  cpf_dominante <- names(sort(table(cpfs_validos), decreasing = TRUE))[1]
-  manter <- df_grupo$NUM_CPF_LIMPO == cpf_dominante | is.na(df_grupo$NUM_CPF_LIMPO) | df_grupo$NUM_CPF_LIMPO == ""
+# --- 10.2 Exportação CSV (Ponto e Vírgula e Células vazias limpas) ---
+# na = "" garante que não apareça "NA" nas células vazias
+write_excel_csv2(duplicatas_marcadas, saida_final_csv, na = "")
+duplicatas_marcadas %>% 
+  filter(!is.na(ID_DUPLICATA)) %>% 
+  write_excel_csv2(saida_dup_csv, na = "")
 
-  df_grupo$ID_DUPLICATA[!manter] <- NA_character_
-  df_grupo$EXCLUIR[!manter]      <- ""
-  df_grupo
-}
-
-# --- 12. Aplicar regra do CPF dominante e limpar colunas auxiliares ---
-duplicatas_marcadas <- duplicatas_marcadas %>%
-  dplyr::group_split(ID_DUPLICATA, .keep = TRUE) %>%
-  purrr::map_dfr(verificar_cpfs_grupo) %>%
-  dplyr::select(-prioridade, -score, -grupo_id, -NM_PACIENT_NORM, -id_linha)
-
-# --- 13. Exportar CSVs com UTF-8 BOM ---
-# 13.1 Base completa
-tmp1 <- tempfile(fileext = ".csv")
-readr::write_delim(duplicatas_marcadas, tmp1, delim = ";", na = "", quote = "all")
-conteudo1 <- readBin(tmp1, what = "raw", n = file.info(tmp1)$size)
-bom <- as.raw(c(0xEF, 0xBB, 0xBF))
-writeBin(c(bom, conteudo1), saida_final)
-unlink(tmp1)
-
-# 13.2 Somente duplicatas
-somente_dups <- duplicatas_marcadas %>%
-  dplyr::filter(!is.na(ID_DUPLICATA) & ID_DUPLICATA != "")
-tmp2 <- tempfile(fileext = ".csv")
-readr::write_delim(somente_dups, tmp2, delim = ";", na = "", quote = "all")
-conteudo2 <- readBin(tmp2, what = "raw", n = file.info(tmp2)$size)
-writeBin(c(bom, conteudo2), saida_duplicatas)
-unlink(tmp2)
-
-message("✅ Arquivos exportados com sucesso.")
-message("→ Base completa: ", saida_final)
-message("→ Somente duplicatas: ", saida_duplicatas)
+cat(paste0("\n✅ PROCESSO FINALIZADO!\n"))
+cat(paste0("Arquivos gerados em: ", dir_saida, "\n"))
