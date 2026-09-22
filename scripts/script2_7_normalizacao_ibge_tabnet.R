@@ -776,4 +776,154 @@ processar_par <- function(df, par) {
 
       cod_nome_na_uf_codigo <- buscar_codigo_nome_uf(
         mun_original[i],
-        uf_codigo_forte[i
+        uf_codigo_forte[i]
+      )
+
+      nome_eh_codigo <- !is.na(mun_como_cod[i])
+
+      if (nome_eh_codigo ||
+          (!is.na(cod_nome_na_uf_codigo) &&
+           cod_nome_na_uf_codigo == codigo_forte[i])) {
+
+        uf_final[i]  <- uf_codigo_forte[i]
+        cod_final[i] <- codigo_forte[i]
+        fonte[i]     <- "CODIGO_MUNICIPAL_MAIS_NOME_CORRIGIU_UF"
+        status[i]    <- "CORRIGIDO_UF_POR_CODIGO_E_NOME"
+        next
+      }
+    }
+
+    # E) NOME NACIONALMENTE ÚNICO.
+    #    Se o nome normalizado existe em apenas um município na referência
+    #    nacional, não é necessário depender da UF para identificar o município.
+    #
+    #    Exemplos esperados pela própria referência:
+    #      Padre Bernardo  -> GO / 521560
+    #      Natal           -> RN / 240810
+    #      Coracao de Jesus-> MG / 311880
+    #
+    #    Esta regra NÃO usa as exceções manuais. Assim, nomes como Campo Grande
+    #    e Brejinho continuam exigindo confirmação de UF por terem homônimos.
+    if (!is.na(cod_nome_unico[i]) && !is.na(uf_nome_unico[i])) {
+      uf_final[i]  <- uf_nome_unico[i]
+      cod_final[i] <- cod_nome_unico[i]
+
+      if (is.na(uf_pair[i])) {
+        fonte[i]  <- "NOME_UNICO_NACIONAL_INFERIU_MUNICIPIO_E_UF"
+        status[i] <- "OK_NOME_UNICO_NACIONAL"
+      } else if (uf_pair[i] != uf_nome_unico[i]) {
+        fonte[i]  <- "NOME_UNICO_NACIONAL_CORRIGIU_UF_CONFLITANTE"
+        status[i] <- "CORRIGIDO_UF_POR_NOME_UNICO_NACIONAL"
+      } else {
+        fonte[i]  <- "NOME_UNICO_NACIONAL_CONFIRMOU_MUNICIPIO"
+        status[i] <- "OK_NOME_UNICO_NACIONAL"
+      }
+
+      next
+    }
+
+    # F) Fallback de residência:
+    #    usa SG_UF e, em caso de conflito, a UF confirmada por ID_MN_RESI /
+    #    CD_MN_RESI. Só aceita se o mesmo nome de município existir naquela UF.
+    if (isTRUE(fallback_res_valido[i])) {
+      uf_final[i]  <- uf_res[i]
+      cod_final[i] <- cod_nome_res[i]
+
+      if (isTRUE(apoio_res$RES_CONFLITO_SG_UF_X_MUNICIPIO[i])) {
+        fonte[i] <- "ID_MN_RESI_CONFIRMOU_UF_APOS_CONFLITO_COM_SG_UF"
+        status[i] <- "CORRIGIDO_POR_RESIDENCIA_CONFIRMADA"
+      } else if (is.na(uf_pair[i])) {
+        fonte[i] <- "SG_UF_OU_RESIDENCIA_PREENCHEU_UF_AUSENTE"
+        status[i] <- "PREENCHIDO_POR_UF_RESIDENCIA"
+      } else if (uf_pair[i] != uf_res[i]) {
+        fonte[i] <- "RESIDENCIA_CORRIGIU_UF_ESPECIFICA_CONFLITANTE"
+        status[i] <- "CORRIGIDO_POR_UF_RESIDENCIA"
+      } else {
+        fonte[i] <- "RESIDENCIA_VALIDOU_MUNICIPIO"
+        status[i] <- "OK_VALIDADO_POR_RESIDENCIA"
+      }
+
+      next
+    }
+
+    # G) Município já é código válido, mas não foi possível resolver conflito.
+    if (!is.na(mun_como_cod[i])) {
+      status[i] <- "MUNICIPIO_CODIFICADO_MAS_UF_NAO_CONFIRMADA"
+      next
+    }
+
+    # H) Classificação dos casos restantes.
+    if (!vazio(uf_original[i]) && is.na(uf_pair[i])) {
+      status[i] <- "UF_NAO_RECONHECIDA"
+      next
+    }
+
+    if (!is.na(uf_pair[i]) && !is.na(codigo_forte[i]) &&
+        !is.na(uf_codigo_forte[i]) && uf_codigo_forte[i] != uf_pair[i]) {
+      status[i] <- "CONFLITO_UF_X_CD_SEM_CONFIRMACAO"
+      next
+    }
+
+    if (!is.na(uf_pair[i]) && !vazio(mun_original[i])) {
+      status[i] <- "MUNICIPIO_NAO_LOCALIZADO_NA_UF"
+      next
+    }
+
+    if (!is.na(uf_pair[i]) && vazio(mun_original[i])) {
+      status[i] <- "UF_OK_MUNICIPIO_VAZIO"
+      next
+    }
+
+    if (is.na(uf_pair[i]) && !vazio(mun_original[i])) {
+      status[i] <- "MUNICIPIO_SEM_UF_E_SEM_CONFIRMACAO"
+      next
+    }
+  }
+
+  # ---------------------------------------------------------------------------
+  # 10.3 APLICAÇÃO
+  # ---------------------------------------------------------------------------
+  uf_nova <- uf_original
+  mun_novo <- mun_original
+  cd_novo <- cd_original
+
+  idx_ok <- !is.na(cod_final) & !is.na(uf_final)
+
+  uf_nova[idx_ok]  <- uf_final[idx_ok]
+  mun_novo[idx_ok] <- cod_final[idx_ok]
+
+  if (ATUALIZAR_CAMPOS_CD && !is.na(campo_cd)) {
+    cd_novo[idx_ok] <- cod_final[idx_ok]
+  }
+
+  df[[campo_uf]]  <- uf_nova
+  df[[campo_mun]] <- mun_novo
+
+  if (ATUALIZAR_CAMPOS_CD && !is.na(campo_cd)) {
+    df[[campo_cd]] <- cd_novo
+  }
+
+  # ---------------------------------------------------------------------------
+  # 10.4 AUDITORIA
+  # ---------------------------------------------------------------------------
+  auditoria_par <- tibble::tibble(
+    LINHA = df$.LINHA_AUDITORIA,
+    CONTEXTO = par$descricao,
+    CAMPO_UF = campo_uf,
+    CAMPO_MUNICIPIO = campo_mun,
+    CAMPO_CD_FONTE = ifelse(is.na(campo_cd), "", campo_cd),
+
+    UF_ORIGINAL = uf_original,
+    MUNICIPIO_ORIGINAL = mun_original,
+    CD_ORIGINAL = cd_original,
+
+    SG_UF_APOIO = apoio_res$RES_SG_UF,
+    ID_MN_RESI_CD_APOIO = apoio_res$RES_MUN_COD,
+    UF_RESIDENCIA_POR_PREFIXO = apoio_res$RES_UF_POR_PREFIXO_CODIGO,
+    UF_RESIDENCIA_CONFIRMADA = apoio_res$RES_UF_CONFIRMADA,
+    CONFLITO_SG_UF_X_RESIDENCIA = apoio_res$RES_CONFLITO_SG_UF_X_MUNICIPIO,
+
+    COD_NOME_UNICO_NACIONAL = cod_nome_unico,
+    UF_NOME_UNICO_NACIONAL = uf_nome_unico,
+
+    UF_RESULTADO = uf_n
