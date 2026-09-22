@@ -26,12 +26,37 @@ message("-------------------------------------------------------")
 Sys.sleep(1) # Pequena pausa para garantir que a mensagem apareça antes da janela
 input_file <- file.choose()
 
-# 2. Selecionar Arquivo de Municípios
-message("-------------------------------------------------------")
-message(">>> POR FAVOR, SELECIONE A TABELA DE MUNICÍPIOS (.csv) <<<")
-message("-------------------------------------------------------")
-Sys.sleep(1)
-reference_file <- file.choose()
+# 2. Localizar/selecionar Arquivo de Municípios
+localizar_referencia_bundled <- function() {
+  nome_ref <- "MunicipiosEregiaoDeSaude2.csv.gz"
+
+  candidatos <- c(
+    file.path(getwd(), "referencias", nome_ref),
+    file.path(getwd(), "..", "referencias", nome_ref),
+    file.path(getwd(), nome_ref)
+  )
+
+  candidatos <- unique(candidatos[file.exists(candidatos)])
+
+  if (length(candidatos) > 0) {
+    return(normalizePath(candidatos[1], winslash = "/", mustWork = TRUE))
+  }
+
+  NA_character_
+}
+
+reference_file <- localizar_referencia_bundled()
+
+if (is.na(reference_file)) {
+  message("-------------------------------------------------------")
+  message(">>> SELECIONE A TABELA DE MUNICÍPIOS (.csv ou .csv.gz) <<<")
+  message("-------------------------------------------------------")
+  Sys.sleep(1)
+  reference_file <- file.choose()
+} else {
+  message("Referência municipal localizada automaticamente no repositório:")
+  message(reference_file)
+}
 
 # 3. Definir caminhos de saída AUTOMATICAMENTE
 # Pega o diretório e o nome do arquivo original para criar o nome do novo arquivo
