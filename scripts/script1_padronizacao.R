@@ -75,16 +75,68 @@ dados <- read_delim(
 
 # --- Leitura da referência de municípios ---
 cat("Lendo arquivo de municípios...\n")
-referencia <- read_delim(reference_file, delim = ";", locale = locale(encoding = "Latin1"),
-                         show_col_types = FALSE, quote = "\"") %>%
+
+# Compatibilidade com o layout antigo da referência
+# (nome_municipio / uf / codigo_ibge) e com o arquivo atualmente utilizado
+# (Municipio / UF / CD_MN_RESI).
+referencia_raw <- read_delim(
+  reference_file,
+  delim = ";",
+  locale = locale(encoding = "Latin1"),
+  show_col_types = FALSE,
+  quote = "\"",
+  col_types = cols(.default = col_character())
+) %>%
   mutate(across(where(is.character), corrigir_mojibake)) %>%
+  mutate(across(where(is.character), stringi::stri_enc_toutf8))
+
+localizar_coluna_ref <- function(nomes, candidatos) {
+  nomes_norm <- nomes %>%
+    str_to_lower() %>%
+    stringi::stri_trans_general("Latin-ASCII") %>%
+    str_replace_all("[^a-z0-9]", "")
+
+  candidatos_norm <- candidatos %>%
+    str_to_lower() %>%
+    stringi::stri_trans_general("Latin-ASCII") %>%
+    str_replace_all("[^a-z0-9]", "")
+
+  for (cand in candidatos_norm) {
+    idx <- which(nomes_norm == cand)
+    if (length(idx) > 0) return(nomes[idx[1]])
+  }
+
+  stop(
+    "Tabela de municípios incompatível. Não foi localizada nenhuma das colunas: ",
+    paste(candidatos, collapse = ", ")
+  )
+}
+
+col_nome_ref <- localizar_coluna_ref(
+  names(referencia_raw),
+  c("nome_municipio", "Municipio", "Município")
+)
+
+col_uf_ref <- localizar_coluna_ref(
+  names(referencia_raw),
+  c("uf", "UF", "Estado")
+)
+
+col_cod_ref <- localizar_coluna_ref(
+  names(referencia_raw),
+  c("codigo_ibge", "codigo_ibge_6d", "CD_MN_RESI", "Codigo Municipio")
+)
+
+referencia <- referencia_raw %>%
+  transmute(
+    nome_municipio = str_trim(as.character(.data[[col_nome_ref]])),
+    uf = str_trim(as.character(.data[[col_uf_ref]])),
+    codigo_ibge = as.character(.data[[col_cod_ref]])
+  ) %>%
   mutate(
-    across(where(is.character), stringi::stri_enc_toutf8),
-    nome_municipio = str_trim(nome_municipio),
     nome_mun_norm = stri_trans_general(str_to_lower(nome_municipio), "Latin-ASCII") %>%
       str_replace_all("[^a-z0-9 ]", ""),
-    uf = str_trim(uf),
-    codigo_ibge_6d = substr(as.character(codigo_ibge), 1, 6)
+    codigo_ibge_6d = substr(str_remove_all(codigo_ibge, "[^0-9]"), 1, 6)
   )
 
 # --- Funções auxiliares ---
