@@ -93,7 +93,7 @@ normalizar_codigo_mun <- function(x) {
 }
 
 ler_csv_flex <- function(caminho) {
-  primeira <- readLines(caminho, n = 1, warn = FALSE, encoding = "UTF-8")
+  primeira <- readr::read_lines(caminho, n_max = 1, progress = FALSE)
 
   n_pv <- stringr::str_count(primeira, stringr::fixed(";"))
   n_vg <- stringr::str_count(primeira, stringr::fixed(","))
@@ -221,15 +221,41 @@ for (i in seq_along(arquivos_base)) {
   message(sprintf("  [%d] %s", i, basename(arquivos_base[i])))
 }
 
-message("")
-message("------------------------------------------------------------")
-message("SELECIONE UMA ÚNICA VEZ A TABELA MunicipiosEregiaoDeSaude2.csv")
-message("Ela será utilizada para todas as bases selecionadas.")
-message("------------------------------------------------------------")
-Sys.sleep(0.5)
+localizar_referencia_bundled <- function() {
+  nome_ref <- "MunicipiosEregiaoDeSaude2.csv.gz"
 
-arquivo_ref <- file.choose()
-arquivo_ref <- normalizePath(arquivo_ref, winslash = "/", mustWork = TRUE)
+  candidatos <- c(
+    file.path(getwd(), "referencias", nome_ref),
+    file.path(getwd(), "..", "referencias", nome_ref),
+    file.path(getwd(), nome_ref)
+  )
+
+  candidatos <- unique(candidatos[file.exists(candidatos)])
+
+  if (length(candidatos) > 0) {
+    return(normalizePath(candidatos[1], winslash = "/", mustWork = TRUE))
+  }
+
+  NA_character_
+}
+
+arquivo_ref <- localizar_referencia_bundled()
+
+if (is.na(arquivo_ref)) {
+  message("")
+  message("------------------------------------------------------------")
+  message("SELECIONE UMA ÚNICA VEZ A TABELA MunicipiosEregiaoDeSaude2")
+  message("Aceita CSV ou CSV.GZ. Ela será utilizada para todas as bases.")
+  message("------------------------------------------------------------")
+  Sys.sleep(0.5)
+
+  arquivo_ref <- file.choose()
+  arquivo_ref <- normalizePath(arquivo_ref, winslash = "/", mustWork = TRUE)
+} else {
+  message("")
+  message("Referência municipal localizada automaticamente no repositório:")
+  message(arquivo_ref)
+}
 
 # ------------------------------------------------------------------------------
 # 5. LEITURA DA TABELA DE REFERÊNCIA

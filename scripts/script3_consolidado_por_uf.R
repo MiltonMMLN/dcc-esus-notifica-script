@@ -20,8 +20,33 @@ message("Selecione o ARQUIVO DCC (.csv, UTF-8 BOM, ;)")
 arq_dcc <- file.choose()
 message("Selecione o ARQUIVO DCA (.csv, UTF-8 BOM, ;)")
 arq_dca <- file.choose()
-message("Selecione o ARQUIVO das Regiões de Saúde (.csv, UTF-8 BOM, ; ou ,)")
-arq_reg <- file.choose()
+localizar_referencia_bundled <- function() {
+  nome_ref <- "MunicipiosEregiaoDeSaude2.csv.gz"
+
+  candidatos <- c(
+    file.path(getwd(), "referencias", nome_ref),
+    file.path(getwd(), "..", "referencias", nome_ref),
+    file.path(getwd(), nome_ref)
+  )
+
+  candidatos <- unique(candidatos[file.exists(candidatos)])
+
+  if (length(candidatos) > 0) {
+    return(normalizePath(candidatos[1], winslash = "/", mustWork = TRUE))
+  }
+
+  NA_character_
+}
+
+arq_reg <- localizar_referencia_bundled()
+
+if (is.na(arq_reg)) {
+  message("Selecione o ARQUIVO das Regiões de Saúde (.csv/.csv.gz, UTF-8, ; ou ,)")
+  arq_reg <- file.choose()
+} else {
+  message("Referência de municípios/regiões localizada automaticamente no repositório:")
+  message(arq_reg)
+}
 
 # =========================
 # 4) Diretório de saída
