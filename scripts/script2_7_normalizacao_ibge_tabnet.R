@@ -623,4 +623,157 @@ processar_par <- function(df, par) {
   }
 
   campo_cd <- par$codigo_candidatos[
-    par$codigo_candidatos 
+    par$codigo_candidatos %in% names(df)
+  ][1]
+
+  if (length(campo_cd) == 0 || is.na(campo_cd)) {
+    campo_cd <- NA_character_
+  }
+
+  n <- nrow(df)
+
+  uf_original  <- as.character(df[[campo_uf]])
+  mun_original <- as.character(df[[campo_mun]])
+
+  cd_original <- if (!is.na(campo_cd)) {
+    as.character(df[[campo_cd]])
+  } else {
+    rep(NA_character_, n)
+  }
+
+  # Apoio da residência é recalculado a cada par, pois o par de residência
+  # é processado antes dos demais campos que podem usar esse fallback.
+  apoio_res <- obter_apoio_residencia(df)
+
+  uf_pair <- resolver_uf(uf_original)
+
+  cd_existente <- codigo_valido_ref(cd_original)
+  mun_como_cod <- codigo_valido_ref(mun_original)
+
+  uf_cd_existente <- uf_do_codigo(cd_existente)
+  uf_mun_como_cod <- uf_do_codigo(mun_como_cod)
+
+  # Código pelo nome usando a UF específica do campo.
+  cod_nome_pair <- buscar_codigo_nome_uf(mun_original, uf_pair)
+
+  # Regra adicional: se o nome identifica UM ÚNICO município no Brasil na
+  # referência, ele pode ser resolvido sem depender da UF do campo.
+  cod_nome_unico <- buscar_codigo_nome_unico_nacional(mun_original)
+  uf_nome_unico  <- buscar_uf_nome_unico_nacional(mun_original)
+
+  # Sinal forte de código já disponível.
+  codigo_forte <- dplyr::coalesce(
+    cd_existente,
+    mun_como_cod
+  )
+
+  uf_codigo_forte <- dplyr::coalesce(
+    uf_cd_existente,
+    uf_mun_como_cod
+  )
+
+  # Valida se o código forte combina com a UF do próprio campo.
+  forte_compativel_pair <- (
+    !is.na(codigo_forte) &
+    !is.na(uf_pair) &
+    !is.na(uf_codigo_forte) &
+    uf_codigo_forte == uf_pair
+  )
+
+  # ---------------------------------------------------------------------------
+  # 10.1 CANDIDATO PELO APOIO DA RESIDÊNCIA
+  # ---------------------------------------------------------------------------
+  uf_res <- apoio_res$RES_UF_CONFIRMADA
+
+  cod_nome_res <- if (isTRUE(par$fallback_residencia)) {
+    buscar_codigo_nome_uf(mun_original, uf_res)
+  } else {
+    rep(NA_character_, n)
+  }
+
+  # Para aceitar fallback de residência:
+  # - deve haver município preenchido;
+  # - o MESMO nome deve existir na UF de residência confirmada.
+  fallback_res_valido <- (
+    isTRUE(par$fallback_residencia) &
+    !vazio(mun_original) &
+    !is.na(uf_res) &
+    !is.na(cod_nome_res)
+  )
+
+  # ---------------------------------------------------------------------------
+  # 10.2 ESCOLHA DO RESULTADO
+  # ---------------------------------------------------------------------------
+  uf_final  <- rep(NA_character_, n)
+  cod_final <- rep(NA_character_, n)
+  fonte     <- rep(NA_character_, n)
+  status    <- rep("REVISAR", n)
+
+  sem_dados <- vazio(uf_original) & vazio(mun_original) & vazio(cd_original)
+
+  for (i in seq_len(n)) {
+    if (sem_dados[i]) {
+      status[i] <- "SEM_DADOS"
+      next
+    }
+
+    # A) UF específica válida + nome do município válido nessa UF.
+    if (!is.na(uf_pair[i]) && !is.na(cod_nome_pair[i])) {
+      uf_final[i]  <- uf_pair[i]
+      cod_final[i] <- cod_nome_pair[i]
+
+      if (!is.na(codigo_forte[i]) && codigo_forte[i] == cod_nome_pair[i]) {
+        fonte[i]  <- "CODIGO_EXISTENTE_VALIDADO_COM_NOME_E_UF"
+        status[i] <- "OK_CODIGO_NOME_UF"
+      } else if (!is.na(codigo_forte[i]) && codigo_forte[i] != cod_nome_pair[i]) {
+        fonte[i]  <- "NOME_MUNICIPIO_MAIS_UF_CORRIGIU_CODIGO_CONFLITANTE"
+        status[i] <- "CORRIGIDO_CODIGO_POR_NOME_E_UF"
+      } else {
+        fonte[i]  <- "NOME_MUNICIPIO_MAIS_UF"
+        status[i] <- "OK_NOME_E_UF"
+      }
+
+      next
+    }
+
+    # B) UF específica válida + código existente pertence a essa UF.
+    if (!is.na(uf_pair[i]) && isTRUE(forte_compativel_pair[i])) {
+      uf_final[i]  <- uf_pair[i]
+      cod_final[i] <- codigo_forte[i]
+      fonte[i]     <- "CODIGO_EXISTENTE_VALIDADO_COM_UF"
+      status[i]    <- "OK_CD_VALIDADO_COM_UF"
+      next
+    }
+
+    # C) UF específica vazia/não reconhecida + código municipal forte válido.
+    #    O código municipal informa sua própria UF.
+    if (is.na(uf_pair[i]) && !is.na(codigo_forte[i]) && !is.na(uf_codigo_forte[i])) {
+      # Se houver nome, exige que ele também corresponda ao código/UF,
+      # salvo quando o campo município já for o próprio código.
+      nome_eh_codigo <- !is.na(mun_como_cod[i])
+
+      cod_validacao_nome <- buscar_codigo_nome_uf(
+        mun_original[i],
+        uf_codigo_forte[i]
+      )
+
+      if (nome_eh_codigo || vazio(mun_original[i]) ||
+          (!is.na(cod_validacao_nome) && cod_validacao_nome == codigo_forte[i])) {
+
+        uf_final[i]  <- uf_codigo_forte[i]
+        cod_final[i] <- codigo_forte[i]
+        fonte[i]     <- "UF_DERIVADA_DO_CODIGO_MUNICIPAL"
+        status[i]    <- "OK_UF_DERIVADA_DO_CODIGO"
+        next
+      }
+    }
+
+    # D) UF específica conflita com código municipal, mas código + nome concordam.
+    if (!is.na(uf_pair[i]) &&
+        !is.na(codigo_forte[i]) &&
+        !is.na(uf_codigo_forte[i]) &&
+        uf_codigo_forte[i] != uf_pair[i]) {
+
+      cod_nome_na_uf_codigo <- buscar_codigo_nome_uf(
+        mun_original[i],
+        uf_codigo_forte[i
