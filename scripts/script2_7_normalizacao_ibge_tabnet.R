@@ -926,4 +926,199 @@ processar_par <- function(df, par) {
     COD_NOME_UNICO_NACIONAL = cod_nome_unico,
     UF_NOME_UNICO_NACIONAL = uf_nome_unico,
 
-    UF_RESULTADO = uf_n
+    UF_RESULTADO = uf_nova,
+    MUNICIPIO_RESULTADO = mun_novo,
+    CD_RESULTADO = if (!is.na(campo_cd)) cd_novo else rep("", n),
+
+    FONTE_DECISAO = fonte,
+    STATUS = status,
+
+    ALTEROU_UF = dplyr::coalesce(
+      as.character(uf_original) != as.character(uf_nova),
+      FALSE
+    ),
+
+    ALTEROU_MUNICIPIO = dplyr::coalesce(
+      as.character(mun_original) != as.character(mun_novo),
+      FALSE
+    )
+  ) %>%
+    filter(STATUS != "SEM_DADOS")
+
+  auditorias[[length(auditorias) + 1L]] <<- auditoria_par
+
+  n_revisar <- sum(
+    stringr::str_detect(
+      status,
+      "NAO_RECONHECIDA|SEM_CONFIRMACAO|NAO_LOCALIZADO|REVISAR"
+    ),
+    na.rm = TRUE
+  )
+
+  cat(
+    sprintf(
+      "%-32s | auditados: %d | normalizados: %d | revisar: %d\n",
+      par$descricao,
+      nrow(auditoria_par),
+      sum(idx_ok, na.rm = TRUE),
+      n_revisar
+    )
+  )
+
+  df
+}
+
+# ------------------------------------------------------------------------------
+# 11. EXECUÇÃO MULTI-BASE
+# ------------------------------------------------------------------------------
+resultados_execucao <- vector("list", length(arquivos_base))
+
+for (idx_arquivo in seq_along(arquivos_base)) {
+
+  arquivo_base <- arquivos_base[idx_arquivo]
+
+  dir_saida <- dirname(arquivo_base)
+  nome_base <- tools::file_path_sans_ext(basename(arquivo_base))
+
+  # Base final permanece fora da pasta de auditoria.
+  arq_csv  <- file.path(dir_saida, paste0(nome_base, "_TabnetBD.csv"))
+  arq_xlsx <- file.path(dir_saida, paste0(nome_base, "_TabnetBD.xlsx"))
+  arq_dbf  <- file.path(dir_saida, paste0(nome_base, "_TabnetBD.dbf"))
+
+  # Todos os arquivos auxiliares de auditoria ficam em pasta própria.
+  dir_auditoria <- file.path(
+    dir_saida,
+    paste0("Auditoria_", nome_base)
+  )
+
+  dir.create(
+    dir_auditoria,
+    recursive = TRUE,
+    showWarnings = FALSE
+  )
+
+  arq_audit <- file.path(
+    dir_auditoria,
+    paste0(nome_base, "_AUDITORIA_IBGE.csv")
+  )
+
+  arq_resumo <- file.path(
+    dir_auditoria,
+    paste0(nome_base, "_RESUMO_IBGE.csv")
+  )
+
+  arq_validacao <- file.path(
+    dir_auditoria,
+    paste0(nome_base, "_VALIDACAO_FINAL_IBGE.csv")
+  )
+
+  cat("\n\n")
+  cat("============================================================\n")
+  cat(sprintf(
+    "PROCESSANDO BASE %d DE %d\n",
+    idx_arquivo,
+    length(arquivos_base)
+  ))
+  cat("============================================================\n")
+  cat("Arquivo:    ", arquivo_base, "\n")
+  cat("Auditoria:  ", dir_auditoria, "\n")
+  cat("------------------------------------------------------------\n")
+
+  # --------------------------------------------------------------------------
+  # 11.1 LEITURA DA BASE
+  # --------------------------------------------------------------------------
+  cat("\nLendo a base DCC...\n")
+
+  dados <- ler_base(arquivo_base)
+  dados$.LINHA_AUDITORIA <- seq_len(nrow(dados))
+
+  n_entrada <- nrow(dados)
+
+  # Zera a auditoria a cada nova base.
+  auditorias <- list()
+
+  # --------------------------------------------------------------------------
+  # 11.2 NORMALIZAÇÃO
+  # --------------------------------------------------------------------------
+  cat("\nNormalizando campos geográficos...\n\n")
+
+  for (par in pares) {
+    dados <- processar_par(dados, par)
+  }
+
+  auditoria <- if (length(auditorias) > 0) {
+    dplyr::bind_rows(auditorias)
+  } else {
+    tibble::tibble()
+  }
+
+  resumo <- if (nrow(auditoria) > 0) {
+    auditoria %>%
+      count(CONTEXTO, STATUS, name = "N") %>%
+      arrange(CONTEXTO, STATUS)
+  } else {
+    tibble::tibble(
+      CONTEXTO = character(),
+      STATUS = character(),
+      N = integer()
+    )
+  }
+
+  dados_saida <- dados %>%
+    select(-.LINHA_AUDITORIA)
+
+  # --------------------------------------------------------------------------
+  # 11.3 VALIDAÇÃO FINAL
+  # --------------------------------------------------------------------------
+  validacoes <- purrr::map_dfr(pares, function(par) {
+
+    campo_uf <- par$uf
+    campo_mun <- par$mun
+
+    if (!(campo_uf %in% names(dados_saida)) ||
+        !(campo_mun %in% names(dados_saida))) {
+      return(NULL)
+    }
+
+    uf <- resolver_uf(dados_saida[[campo_uf]])
+    mun <- codigo_valido_ref(dados_saida[[campo_mun]])
+    uf_mun <- uf_do_codigo(mun)
+
+    preenchido_mun <- !vazio(dados_saida[[campo_mun]])
+
+    inconsistente <- preenchido_mun & (
+      is.na(mun) |
+      is.na(uf) |
+      is.na(uf_mun) |
+      uf != uf_mun
+    )
+
+    tibble::tibble(
+      CONTEXTO = par$descricao,
+      CAMPO_UF = campo_uf,
+      CAMPO_MUNICIPIO = campo_mun,
+      INCONSISTENCIAS_REMANESCENTES = sum(
+        inconsistente,
+        na.rm = TRUE
+      )
+    )
+  })
+
+  cat("\nValidação final:\n")
+  if (nrow(validacoes) > 0) {
+    print(validacoes)
+  }
+
+  # --------------------------------------------------------------------------
+  # 11.4 EXPORTAÇÃO DA AUDITORIA
+  # --------------------------------------------------------------------------
+  cat("\nSalvando arquivos de auditoria...\n")
+
+  readr::write_excel_csv2(
+    auditoria,
+    arq_audit,
+    na = ""
+  )
+
+  readr::write_excel_csv2(
+   
