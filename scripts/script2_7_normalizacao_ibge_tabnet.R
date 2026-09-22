@@ -1153,4 +1153,229 @@ processar_par <- function(df, par) {
     #
     #    Esta regra NÃO usa as exceções manuais. Assim, nomes como Campo Grande
     #    e Brejinho continuam exigindo confirmação de UF por terem homônimos.
-    if (!is.na(cod_nome_unico[i]) && !i
+    if (!is.na(cod_nome_unico[i]) && !is.na(uf_nome_unico[i])) {
+      uf_final[i]  <- uf_nome_unico[i]
+      cod_final[i] <- cod_nome_unico[i]
+
+      if (is.na(uf_pair[i])) {
+        fonte[i]  <- "NOME_UNICO_NACIONAL_INFERIU_MUNICIPIO_E_UF"
+        status[i] <- "OK_NOME_UNICO_NACIONAL"
+      } else if (uf_pair[i] != uf_nome_unico[i]) {
+        fonte[i]  <- "NOME_UNICO_NACIONAL_CORRIGIU_UF_CONFLITANTE"
+        status[i] <- "CORRIGIDO_UF_POR_NOME_UNICO_NACIONAL"
+      } else {
+        fonte[i]  <- "NOME_UNICO_NACIONAL_CONFIRMOU_MUNICIPIO"
+        status[i] <- "OK_NOME_UNICO_NACIONAL"
+      }
+
+      next
+    }
+
+    # F) Fallback de residência:
+    #    usa SG_UF e, em caso de conflito, a UF confirmada por ID_MN_RESI /
+    #    CD_MN_RESI. Só aceita se o mesmo nome de município existir naquela UF.
+    if (isTRUE(fallback_res_valido[i])) {
+      uf_final[i]  <- uf_res[i]
+      cod_final[i] <- cod_nome_res[i]
+
+      if (isTRUE(apoio_res$RES_CONFLITO_SG_UF_X_MUNICIPIO[i])) {
+        fonte[i] <- "ID_MN_RESI_CONFIRMOU_UF_APOS_CONFLITO_COM_SG_UF"
+        status[i] <- "CORRIGIDO_POR_RESIDENCIA_CONFIRMADA"
+      } else if (is.na(uf_pair[i])) {
+        fonte[i] <- "SG_UF_OU_RESIDENCIA_PREENCHEU_UF_AUSENTE"
+        status[i] <- "PREENCHIDO_POR_UF_RESIDENCIA"
+      } else if (uf_pair[i] != uf_res[i]) {
+        fonte[i] <- "RESIDENCIA_CORRIGIU_UF_ESPECIFICA_CONFLITANTE"
+        status[i] <- "CORRIGIDO_POR_UF_RESIDENCIA"
+      } else {
+        fonte[i] <- "RESIDENCIA_VALIDOU_MUNICIPIO"
+        status[i] <- "OK_VALIDADO_POR_RESIDENCIA"
+      }
+
+      next
+    }
+
+    # G) Município já é código válido, mas não foi possível resolver conflito.
+    if (!is.na(mun_como_cod[i])) {
+      status[i] <- "MUNICIPIO_CODIFICADO_MAS_UF_NAO_CONFIRMADA"
+      next
+    }
+
+    # H) Classificação dos casos restantes.
+    if (!vazio(uf_original[i]) && is.na(uf_pair[i])) {
+      status[i] <- "UF_NAO_RECONHECIDA"
+      next
+    }
+
+    if (!is.na(uf_pair[i]) && !is.na(codigo_forte[i]) &&
+        !is.na(uf_codigo_forte[i]) && uf_codigo_forte[i] != uf_pair[i]) {
+      status[i] <- "CONFLITO_UF_X_CD_SEM_CONFIRMACAO"
+      next
+    }
+
+    if (!is.na(uf_pair[i]) && !vazio(mun_original[i])) {
+      status[i] <- "MUNICIPIO_NAO_LOCALIZADO_NA_UF"
+      next
+    }
+
+    if (!is.na(uf_pair[i]) && vazio(mun_original[i])) {
+      status[i] <- "UF_OK_MUNICIPIO_VAZIO"
+      next
+    }
+
+    if (is.na(uf_pair[i]) && !vazio(mun_original[i])) {
+      status[i] <- "MUNICIPIO_SEM_UF_E_SEM_CONFIRMACAO"
+      next
+    }
+  }
+
+  # ---------------------------------------------------------------------------
+  # 10.3 APLICAÇÃO
+  # ---------------------------------------------------------------------------
+  uf_nova <- uf_original
+  mun_novo <- mun_original
+  cd_novo <- cd_original
+
+  idx_ok <- !is.na(cod_final) & !is.na(uf_final)
+
+  uf_nova[idx_ok]  <- uf_final[idx_ok]
+  mun_novo[idx_ok] <- cod_final[idx_ok]
+
+  if (ATUALIZAR_CAMPOS_CD && !is.na(campo_cd)) {
+    cd_novo[idx_ok] <- cod_final[idx_ok]
+  }
+
+  df[[campo_uf]]  <- uf_nova
+  df[[campo_mun]] <- mun_novo
+
+  if (ATUALIZAR_CAMPOS_CD && !is.na(campo_cd)) {
+    df[[campo_cd]] <- cd_novo
+  }
+
+  # ---------------------------------------------------------------------------
+  # 10.4 AUDITORIA
+  # ---------------------------------------------------------------------------
+  auditoria_par <- tibble::tibble(
+    LINHA = df$.LINHA_AUDITORIA,
+    CONTEXTO = par$descricao,
+    CAMPO_UF = campo_uf,
+    CAMPO_MUNICIPIO = campo_mun,
+    CAMPO_CD_FONTE = ifelse(is.na(campo_cd), "", campo_cd),
+
+    UF_ORIGINAL = uf_original,
+    MUNICIPIO_ORIGINAL = mun_original,
+    CD_ORIGINAL = cd_original,
+
+    SG_UF_APOIO = apoio_res$RES_SG_UF,
+    ID_MN_RESI_CD_APOIO = apoio_res$RES_MUN_COD,
+    UF_RESIDENCIA_POR_PREFIXO = apoio_res$RES_UF_POR_PREFIXO_CODIGO,
+    UF_RESIDENCIA_CONFIRMADA = apoio_res$RES_UF_CONFIRMADA,
+    CONFLITO_SG_UF_X_RESIDENCIA = apoio_res$RES_CONFLITO_SG_UF_X_MUNICIPIO,
+
+    COD_NOME_UNICO_NACIONAL = cod_nome_unico,
+    UF_NOME_UNICO_NACIONAL = uf_nome_unico,
+
+    UF_RESULTADO = uf_nova,
+    MUNICIPIO_RESULTADO = mun_novo,
+    CD_RESULTADO = if (!is.na(campo_cd)) cd_novo else rep("", n),
+
+    FONTE_DECISAO = fonte,
+    STATUS = status,
+
+    ALTEROU_UF = dplyr::coalesce(
+      as.character(uf_original) != as.character(uf_nova),
+      FALSE
+    ),
+
+    ALTEROU_MUNICIPIO = dplyr::coalesce(
+      as.character(mun_original) != as.character(mun_novo),
+      FALSE
+    )
+  ) %>%
+    filter(STATUS != "SEM_DADOS")
+
+  auditorias[[length(auditorias) + 1L]] <<- auditoria_par
+
+  n_revisar <- sum(
+    stringr::str_detect(
+      status,
+      "NAO_RECONHECIDA|SEM_CONFIRMACAO|NAO_LOCALIZADO|REVISAR"
+    ),
+    na.rm = TRUE
+  )
+
+  cat(
+    sprintf(
+      "%-32s | auditados: %d | normalizados: %d | revisar: %d\n",
+      par$descricao,
+      nrow(auditoria_par),
+      sum(idx_ok, na.rm = TRUE),
+      n_revisar
+    )
+  )
+
+  df
+}
+
+# ------------------------------------------------------------------------------
+# 11. EXECUÇÃO MULTI-BASE
+# ------------------------------------------------------------------------------
+resultados_execucao <- vector("list", length(arquivos_base))
+
+for (idx_arquivo in seq_along(arquivos_base)) {
+
+  arquivo_base <- arquivos_base[idx_arquivo]
+
+  dir_saida <- dirname(arquivo_base)
+  nome_base <- tools::file_path_sans_ext(basename(arquivo_base))
+
+  # Base final permanece fora da pasta de auditoria.
+  arq_csv  <- file.path(dir_saida, paste0(nome_base, "_TabnetBD.csv"))
+  arq_xlsx <- file.path(dir_saida, paste0(nome_base, "_TabnetBD.xlsx"))
+  arq_dbf  <- file.path(dir_saida, paste0(nome_base, "_TabnetBD.dbf"))
+
+  # Todos os arquivos auxiliares de auditoria ficam em pasta própria.
+  dir_auditoria <- file.path(
+    dir_saida,
+    paste0("Auditoria_", nome_base)
+  )
+
+  dir.create(
+    dir_auditoria,
+    recursive = TRUE,
+    showWarnings = FALSE
+  )
+
+  arq_audit <- file.path(
+    dir_auditoria,
+    paste0(nome_base, "_AUDITORIA_IBGE.csv")
+  )
+
+  arq_resumo <- file.path(
+    dir_auditoria,
+    paste0(nome_base, "_RESUMO_IBGE.csv")
+  )
+
+  arq_validacao <- file.path(
+    dir_auditoria,
+    paste0(nome_base, "_VALIDACAO_FINAL_IBGE.csv")
+  )
+
+  cat("\n\n")
+  cat("============================================================\n")
+  cat(sprintf(
+    "PROCESSANDO BASE %d DE %d\n",
+    idx_arquivo,
+    length(arquivos_base)
+  ))
+  cat("============================================================\n")
+  cat("Arquivo:    ", arquivo_base, "\n")
+  cat("Auditoria:  ", dir_auditoria, "\n")
+  cat("------------------------------------------------------------\n")
+
+  # --------------------------------------------------------------------------
+  # 11.1 LEITURA DA BASE
+  # --------------------------------------------------------------------------
+  cat("\nLendo a base DCC...\n")
+
+  dados <-
