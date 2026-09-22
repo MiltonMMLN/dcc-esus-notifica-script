@@ -18,7 +18,7 @@ Os scripts apoiam as seguintes etapas:
 - relacionamento DCC × DCA;
 - consolidação de situações para qualificação por UF;
 - recodificação das categorias da base para valores numéricos;
-- normalização de UF e município para códigos IBGE;
+- criação dos códigos de UF a partir dos códigos municipais IBGE já existentes;
 - geração de arquivos finais para o fluxo de **TabNet BD/TabWin**;
 - geração de auditorias dos ajustes geográficos.
 
@@ -41,7 +41,7 @@ dcc-esus-notifica-script/
 │   ├── script2_duplicidades.R
 │   ├── script2_5_dcc_vs_dca.R
 │   ├── script2_6_substituir_categorias.R
-│   ├── script2_7_normalizacao_ibge_tabnet.R
+│   ├── script2_7_criar_codigos_uf_tabnet.R
 │   └── script3_consolidado_por_uf.R
 ├── README.md
 ├── LICENSE
@@ -84,11 +84,9 @@ O arquivo contém dados geográficos/agregados de referência e **não contém r
 
 ### Uso automático
 
-Os Scripts 1, 2.7 e 3 procuram primeiro a pasta de referência dentro do próprio clone do repositório. Se as partes forem localizadas, elas são ordenadas, combinadas automaticamente e não é necessário selecionar a tabela manualmente.
+Os Scripts 1 e 3 procuram primeiro a pasta de referência dentro do próprio clone do repositório. Se as partes forem localizadas, elas são ordenadas e combinadas automaticamente.
 
-Se a referência não estiver disponível no diretório esperado, os scripts mantêm o comportamento de fallback e abrem uma janela para seleção manual.
-
-O Script 2.7 utiliza a tabela para validar UF × município, identificar homônimos e reconhecer nomes de municípios únicos no Brasil. O Script 3 utiliza `CD_MN_RESI` e a Região de Saúde para os consolidados por UF.
+O Script 2.7 **não utiliza mais a tabela municipal de referência**. Conforme orientação mais recente da área técnica, ele trabalha exclusivamente com os campos de código municipal `CD_*` já existentes na própria base e cria os respectivos códigos de UF pelos dois primeiros dígitos. O Script 3 continua utilizando `CD_MN_RESI` e a Região de Saúde para os consolidados por UF.
 
 > [!NOTE]
 > O arquivo-fonte utilizado nesta atualização possui SHA-256 `af8ef6af76548bdb32a558419e37e0ecd02c9d5a00a3c3beb4d5e031bf94e64c`.
@@ -123,7 +121,7 @@ Validação/ajustes técnicos na base
 Script 2.6 — Substituição de categorias por códigos
       │
       ▼
-Script 2.7 — Normalização geográfica IBGE / TabNet BD
+Script 2.7 — Criação dos códigos de UF / TabNet BD
       │
       ├── auditorias por base
       └── arquivos finais *_TabnetBD
@@ -275,125 +273,80 @@ O DBF recebe tratamento específico dos campos de data e conferência automátic
 
 ---
 
-## 2.7. Normalização IBGE para TabNet BD
+## 2.7. Criação dos códigos de UF para TabNet BD
 
 Arquivo:
 
 ```text
-scripts/script2_7_normalizacao_ibge_tabnet.R
+scripts/script2_7_criar_codigos_uf_tabnet.R
 ```
 
-Esta etapa normaliza os campos territoriais da base final.
+Esta etapa segue a orientação mais recente da área técnica: **os campos originais de UF e município permanecem inalterados**.
 
-### Seleção múltipla
+O script não consulta a tabela de municípios, não corrige nomes, não substitui campos descritivos e não altera os códigos municipais já existentes. Ele utiliza exclusivamente os campos `CD_*` da própria base para acrescentar nove códigos de UF.
 
-É possível selecionar **várias bases na mesma execução**, por exemplo os arquivos de 2023, 2024 e 2025.
+### Campos criados
 
-A tabela de municípios é selecionada uma única vez e reaproveitada em todas as bases.
+| Novo campo de UF | Derivado de | Contexto |
+|---|---|---|
+| `CD_UF_NOT` | `CD_MUNICIP` | Notificação |
+| `CD_UF_RESI` | `CD_MN_RESI` | Residência |
+| `CD_UF_NASC` | `CDMUNNASC` | Nascimento |
+| `CD_UF_INF` | `CD_COMUNIN` | Provável infecção |
+| `CD_UF_UBS` | `CD_MUN_UBS` | UBS de acompanhamento |
+| `CD_UF_ESP` | `CD_MUN_ESP` | Hospital/serviço especializado |
+| `CD_UF_RSTF` | `CDMNRESITF` | Nova residência |
+| `CD_UF_NVAC` | `CDMUNNOVAC` | Nova UBS |
+| `CD_ANT_UF` | `CD_ANT_MUN` | Unidade especializada anterior |
 
-### Campos tratados
+### Regra de derivação
 
-O script trabalha com os seguintes pares, quando presentes:
+Para cada campo municipal:
 
-| Contexto | UF | Município | Campo auxiliar de código |
-|---|---|---|---|
-| Notificação | `SG_UF_NOT` | `ID_MUNICIP` | `CD_MUNICIP` |
-| Residência | `SG_UF` | `ID_MN_RESI` | `CD_MN_RESI` |
-| Nascimento | `UF_NASC` | `MUN_NASC` | `CDMUNNASC` / `CD_MUN_NASC` |
-| Provável infecção | `COUFINF` | `COMUNINF` | `CD_COMUNIN` |
-| UBS de acompanhamento | `UF_UBS_AC` | `MUN_UBS_AC` | `CD_MUN_UBS` |
-| Hospital/serviço especializado | `UF_HOSPESP` | `MUN_ESP` | `CD_MUN_ESP` |
-| Nova residência | `UF_RESI_TF` | `MN_RESI_TF` | `CDMNRESITF` / `CD_MN_RESI_TF` |
-| Nova UBS | `UF_NOV_AC` | `MUN_NOV_AC` | `CDMUNNOVAC` / `CD_MUN_NOV_AC` |
-| Nova unidade especializada | `ANT_UF_ESP` | `ANT_MUN` | `CD_ANT_MUN` |
-
-### Padrão de saída
-
-- UF: **2 dígitos**;
-- município: **6 dígitos** no padrão utilizado pelo fluxo SINAN/TabNet;
-- códigos IBGE completos de 7 dígitos são reconhecidos e convertidos para os 6 primeiros dígitos.
-
-### Hierarquia de validação
-
-O script prioriza:
-
-1. município + UF específica do campo;
-2. código municipal existente validado pela UF;
-3. município já codificado;
-4. município com nome único no Brasil;
-5. `SG_UF` como apoio, nos contextos permitidos;
-6. `ID_MN_RESI`/`CD_MN_RESI` e o prefixo de UF do código municipal como confirmação territorial;
-7. auditoria quando a ambiguidade não puder ser resolvida.
-
-Não é utilizado fuzzy matching para escolher município.
-
-### Municípios sem homônimo
-
-Se o nome normalizado existir em apenas um município na referência nacional, o script pode identificar o município mesmo quando a UF específica estiver vazia.
-
-Exemplos esperados:
-
-```text
-Padre Bernardo  -> GO -> 521560
-Natal           -> RN -> 240810
-Coracao de Jesus -> MG -> 311880
-```
-
-### Homônimos
-
-Nomes com mais de um município no Brasil exigem confirmação territorial.
+- o valor preenchido deve conter exatamente seis dígitos;
+- os dois primeiros dígitos representam o código da UF;
+- o prefixo precisa pertencer à relação oficial de códigos de UF;
+- se o campo municipal estiver vazio, o novo campo de UF permanece vazio;
+- código municipal inválido ou prefixo de UF inválido não é reinterpretado: o novo campo fica vazio e a ocorrência é registrada na auditoria agregada.
 
 Exemplo:
 
 ```text
-Brejinho/PE -> 260250
-Brejinho/RN -> 240180
+CD_MUNICIP = 290940
+CD_UF_NOT  = 29
+
+CD_MN_RESI = 430040
+CD_UF_RESI = 43
 ```
 
-### Exceções explícitas atualmente registradas
+### Preservação do DBF
 
-As exceções dependem de confirmação da UF correspondente:
+O processamento do DBF é realizado de forma a preservar os campos e registros originais. Os nove novos campos, todos do tipo Character com largura 2, são acrescentados ao final da estrutura.
 
-```text
-GO | Alto Horizonte                 -> 520055
-AL | Arapiraca                      -> 270030
-RN | Augusto Severo                 -> 240130
-RN | Augusto Severo (Campo Grande)  -> 240130
-RN | Campo Grande                   -> 240130
-BA | Barreiras                      -> 290320
-MG | Bonfinopolis de Minas          -> 310820
-GO | Brazabrantes                   -> 520360
-SP | Florinia                       -> 351610
-PE | Brejinho                       -> 260250
-RN | Brejinho                       -> 240180
-```
+A rotina valida após a gravação:
 
-`Florinia` é tratado como erro de grafia observado na base de 2023 para **Florínea/SP**.
+- quantidade de registros;
+- quantidade e ordem dos campos originais;
+- presença e ordem dos nove novos campos;
+- preservação byte a byte da parte original de cada registro.
 
-### Proteção contra uso indevido da residência
+### Seleção múltipla
 
-Campos de UBS, hospital e serviço especializado não recebem automaticamente a UF de residência do paciente, pois a unidade pode estar em outra UF.
+É possível selecionar várias bases DBF na mesma execução, por exemplo 2023, 2024 e 2025.
 
-### Saídas finais
+O script deve ser executado sobre as bases da etapa anterior que **ainda não possuam** os nove campos `CD_UF_*`.
 
-As bases finais ficam no mesmo diretório da entrada:
+### Saídas
+
+Para cada DBF de entrada são gerados:
 
 ```text
-<nome-base>_TabnetBD.csv
-<nome-base>_TabnetBD.xlsx
 <nome-base>_TabnetBD.dbf
+<nome-base>_AUDITORIA_CODIGOS_UF.csv
 ```
 
-Para cada base é criada uma pasta separada:
+A auditoria é agregada por campo e não reproduz registros individuais.
 
-```text
-Auditoria_<nome-base>/
-├── <nome-base>_AUDITORIA_IBGE.csv
-├── <nome-base>_RESUMO_IBGE.csv
-└── <nome-base>_VALIDACAO_FINAL_IBGE.csv
-```
-
-A auditoria contém somente informações necessárias à validação geográfica e número da linha, evitando reproduzir campos pessoais desnecessários.
 
 ---
 
@@ -441,7 +394,7 @@ A revisão do repositório identificou os seguintes pontos importantes:
 
 4. **Scripts 2.5 e 3** — o relacionamento DCC × DCA usa abordagem probabilística e deve continuar sujeito a revisão epidemiológica.
 
-5. **Script 2.7** — a inferência de município por nome único depende da completude e atualização da tabela municipal selecionada. Municípios homônimos continuam exigindo confirmação territorial.
+5. **Script 2.7** — conforme orientação mais recente da área técnica, não normaliza, substitui ou reinterpreta os campos originais de UF e município. Acrescenta somente os nove códigos de UF derivados dos campos municipais `CD_*` já existentes.
 
 ---
 
@@ -488,10 +441,10 @@ source("scripts/script3_consolidado_por_uf.R")
 
 # Após a qualificação:
 source("scripts/script2_6_substituir_categorias.R")
-source("scripts/script2_7_normalizacao_ibge_tabnet.R")
+source("scripts/script2_7_criar_codigos_uf_tabnet.R")
 ```
 
-Os scripts usam seleção interativa de arquivos. O Script 2.7 utiliza seleção múltipla de bases em ambiente gráfico.
+Os scripts usam seleção interativa de arquivos. O Script 2.7 permite selecionar múltiplas bases DBF em ambiente gráfico.
 
 ---
 
@@ -523,10 +476,10 @@ Antes de utilizar uma nova versão em produção, recomenda-se conferir:
 - total de registros antes e depois;
 - preservação de zeros à esquerda;
 - datas;
-- campos de UF com 2 dígitos;
-- campos de município com 6 dígitos;
-- coerência UF × município;
-- registros classificados para revisão na auditoria;
+- preservação integral dos campos originais;
+- presença dos nove novos campos de UF com 2 dígitos;
+- coerência entre cada CD_UF_* e os dois primeiros dígitos do respectivo CD_* municipal;
+- códigos municipais inválidos/prefixos de UF inválidos registrados na auditoria agregada;
 - abertura do DBF no TabWin;
 - categorias recodificadas pelo Script 2.6;
 - comportamento das regras em amostra conhecida.
