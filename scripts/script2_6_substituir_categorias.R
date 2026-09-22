@@ -70,6 +70,7 @@ if (extensao == "xlsx") {
 # ============================================================
 cat("\nAplicando renomeação de colunas e ajustes de categorias...\n")
 df_processado <- df %>%
+  # RENOMEANDO PARA XLSX E DBF (Antes de qualquer processamento)
   rename(any_of(c(
     NOTIFCPF   = "NOTIFICANTE_CPF",
     NOTIFEMAIL = "NOTIFICANTE-EMAIL",
@@ -186,6 +187,7 @@ cat("\nAplicando ajustes com condicionais de reações adversas...\n")
 df_processado <- df_processado %>%
   mutate(
     ADVERS_BNZ = case_when(ADVERS_BNZ %==% "Sem reacoes" ~ "2", TRUE ~ as.character(ADVERS_BNZ)),
+    
     BNZ_LEVE   = case_when(ADVERS_BNZ %==% "2" ~ "2", BNZ_LEVE %==% "Dermopatia leve/moderada" ~ "1", TRUE ~ as.character(BNZ_LEVE)),
     BNZ_GRAVE  = case_when(ADVERS_BNZ %==% "2" ~ "2", BNZ_GRAVE %==% "Dermopatia grave" ~ "1", TRUE ~ as.character(BNZ_GRAVE)),
     BNZ_AUGESI = case_when(ADVERS_BNZ %==% "2" ~ "2", BNZ_AUGESI %==% "Ageusia" ~ "1", TRUE ~ as.character(BNZ_AUGESI)),
@@ -194,7 +196,9 @@ df_processado <- df_processado %>%
     BNZ_GASTRO = case_when(ADVERS_BNZ %==% "2" ~ "2", BNZ_GASTRO %==% "Intolerancia gastrointestinal" ~ "1", TRUE ~ as.character(BNZ_GASTRO)),
     BNZ_ARTRAL = case_when(ADVERS_BNZ %==% "2" ~ "2", BNZ_ARTRAL %==% "Artralgias" ~ "1", TRUE ~ as.character(BNZ_ARTRAL)),
     REAC_BNZ   = case_when(ADVERS_BNZ %==% "2" ~ "2", REAC_BNZ %==% "Outras" ~ "1", TRUE ~ as.character(REAC_BNZ)),
+    
     ADVERS_NFX = case_when(ADVERS_NFX %==% "Sem reacoes" ~ "2", TRUE ~ as.character(ADVERS_NFX)),
+    
     NFX_LEVE   = case_when(ADVERS_NFX %==% "2" ~ "2", NFX_LEVE %==% "Dermopatia leve/moderada" ~ "1", TRUE ~ as.character(NFX_LEVE)),
     NFX_GRAVE  = case_when(ADVERS_NFX %==% "2" ~ "2", NFX_GRAVE %==% "Dermopatia grave" ~ "1", TRUE ~ as.character(NFX_GRAVE)),
     NFX_AGEUSI = case_when(ADVERS_NFX %==% "2" ~ "2", NFX_AGEUSI %==% "Ageusia" ~ "1", TRUE ~ as.character(NFX_AGEUSI)),
@@ -214,9 +218,12 @@ converter_para_data <- function(x) {
   x_char <- as.character(x)
   vazio  <- is.na(x_char) | x_char == "" | x_char == "NA" | x_char == "NULL" | x_char == "00000000"
   resultado <- rep(as.Date(NA), length(x_char))
+  
   for (i in seq_along(x_char)) {
     if (vazio[i]) next
     val <- x_char[i]
+    
+    # 1. Se vier como número serial do Excel
     if (grepl("^[0-9]+$", val)) {
       num_val <- as.numeric(val)
       if (num_val > 300) {
@@ -227,6 +234,8 @@ converter_para_data <- function(x) {
         }
       }
     }
+    
+    # 2. Se vier como texto de data
     dt_parsed <- suppressWarnings(parse_date_time(val, orders = c("Ymd", "dmY", "dmy", "ymd", "Y-m-d", "d/m/Y", "d/m/y"), quiet = TRUE))
     if (!is.na(dt_parsed)) {
       resultado[i] <- as.Date(dt_parsed)
@@ -235,19 +244,22 @@ converter_para_data <- function(x) {
   return(resultado)
 }
 
+# AQUI FOI AJUSTADO DT_DIGITACAO PARA DT_DIGITAC
 colunas_data <- c("DT_NASC", "DT_NOTIFIC", "DT_OBITO", "DT_ENCERRA", "DT_CRIACAO", "DT_DIGITAC")
 colunas_data_presentes <- intersect(colunas_data, names(df_processado))
 
+# Versão para o XLSX: Mantém vazios reais como NA (para o Excel ignorar nas contagens)
 df_processado_xlsx <- df_processado %>%
   mutate(across(-any_of(colunas_data_presentes), as.character)) %>%
   mutate(across(any_of(colunas_data_presentes), converter_para_data)) %>%
-  mutate(across(where(is.character), ~ na_if(.x, "")))
+  mutate(across(where(is.character), ~ na_if(.x, ""))) # Converte strings vazias "" em NA real
 
 # ============================================================
 # 8. EXPORTAÇÃO DOS ARQUIVOS (XLSX E DBF)
 # ============================================================
 cat("\nSalvando arquivos...\n")
 
+# --- 1. Exportar XLSX com vazios reais (NA) para contagens corretas ---
 wb <- createWorkbook()
 addWorksheet(wb, "Dados_Ajustados")
 writeData(wb, 1, df_processado_xlsx)
@@ -263,31 +275,41 @@ if (length(date_col_indices) > 0 && nrow(df_processado_xlsx) > 0) {
 
 saveWorkbook(wb, saida_final_xlsx, overwrite = TRUE)
 
+# --- 2. Exportar DBF com datas em campo tipo "Data" (D) de verdade -------
+
 ajustar_dbf_datas <- function(caminho_dbf, de = character(0), para = character(0)) {
   bytes <- readBin(caminho_dbf, "raw", n = file.info(caminho_dbf)$size)
+  
   n_records  <- as.integer(readBin(bytes[5:8],   "integer", n = 1, size = 4, endian = "little"))
   header_len <- as.integer(readBin(bytes[9:10],  "integer", n = 1, size = 2, endian = "little", signed = FALSE))
   record_len <- as.integer(readBin(bytes[11:12], "integer", n = 1, size = 2, endian = "little", signed = FALSE))
   n_campos   <- (header_len - 32L - 1L) %/% 32L
+  
   campos_data <- list()
-  offset_registro <- 1L
+  offset_registro <- 1L  # o primeiro byte de cada registro é a marca de exclusão
+  
   for (i in seq_len(n_campos)) {
     ini <- 32L + (i - 1L) * 32L + 1L
     nome_bruto <- bytes[ini:(ini + 10L)]
     nome_atual <- rawToChar(nome_bruto[nome_bruto != as.raw(0)])
     tipo       <- rawToChar(bytes[ini + 11L])
     tamanho    <- as.integer(bytes[ini + 16L])
+    
+    # restaura o nome original dos campos que foram renomeados temporariamente
     idx <- match(nome_atual, de)
     if (!is.na(idx)) {
       novo_raw <- charToRaw(substr(para[idx], 1, 11))
       novo_raw <- c(novo_raw, raw(11L - length(novo_raw)))
       bytes[ini:(ini + 10L)] <- novo_raw
     }
+    
+    # guarda a posição de todo campo tipo Data, para tratar valores ausentes
     if (tipo == "D") {
       campos_data[[length(campos_data) + 1L]] <- list(offset = offset_registro, tamanho = tamanho)
     }
     offset_registro <- offset_registro + tamanho
   }
+  
   if (length(campos_data) > 0 && n_records > 0) {
     zeros <- charToRaw("00000000")
     for (rec in seq_len(n_records)) {
@@ -296,15 +318,17 @@ ajustar_dbf_datas <- function(caminho_dbf, de = character(0), para = character(0
         p1 <- inicio_registro + campo$offset + 1L
         p2 <- p1 + campo$tamanho - 1L
         if (campo$tamanho == 8L && identical(bytes[p1:p2], zeros)) {
-          bytes[p1:p2] <- as.raw(32L)
+          bytes[p1:p2] <- as.raw(32L)  # 32 = espaço em branco
         }
       }
     }
   }
+  
   writeBin(bytes, caminho_dbf)
   invisible(TRUE)
 }
 
+# colunas de data com nome > 8 caracteres precisam de um nome temporário
 colunas_data_longas <- colunas_data_presentes[nchar(colunas_data_presentes) > 8]
 nomes_temp_data <- sprintf("DTTMP%02d", seq_along(colunas_data_longas))
 
@@ -320,6 +344,7 @@ if (length(colunas_data_longas) > 0) {
 write.dbf(as.data.frame(df_dbf), saida_final_dbf)
 ajustar_dbf_datas(saida_final_dbf, de = nomes_temp_data, para = colunas_data_longas)
 
+# --- Conferência automática do DBF gerado ---
 tryCatch({
   conferencia <- read.dbf(saida_final_dbf, as.is = TRUE)
   cat("\nConferência das colunas de data no DBF gerado:\n")
