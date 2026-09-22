@@ -47,3 +47,16 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+# Dados e resultados de vigilância - não versionar
+*.csv
+*.xlsx
+*.xls
+*.dbf
+*.dbc
+*.zip
+Auditoria_*/
+DCC_vs_DCA/
+consolidado_por_uf/
+*_TabnetBD.*
+
