@@ -290,4 +290,99 @@ writeData(wb, 1, df_processado_xlsx)
 dateStyle <- createStyle(numFmt = "DD/MM/YYYY")
 date_col_indices <- which(names(df_processado_xlsx) %in% colunas_data_presentes)
 
-if (length(date_col_indices) > 0 && nrow(df_processado_xlsx) > 0) 
+if (length(date_col_indices) > 0 && nrow(df_processado_xlsx) > 0) {
+  for (col_idx in date_col_indices) {
+    addStyle(wb, 1, style = dateStyle, rows = 2:(nrow(df_processado_xlsx) + 1), cols = col_idx, stack = TRUE)
+  }
+}
+
+saveWorkbook(wb, saida_final_xlsx, overwrite = TRUE)
+
+# --- 2. Exportar DBF com datas em campo tipo "Data" (D) de verdade -------
+
+ajustar_dbf_datas <- function(caminho_dbf, de = character(0), para = character(0)) {
+  bytes <- readBin(caminho_dbf, "raw", n = file.info(caminho_dbf)$size)
+  
+  n_records  <- as.integer(readBin(bytes[5:8],   "integer", n = 1, size = 4, endian = "little"))
+  header_len <- as.integer(readBin(bytes[9:10],  "integer", n = 1, size = 2, endian = "little", signed = FALSE))
+  record_len <- as.integer(readBin(bytes[11:12], "integer", n = 1, size = 2, endian = "little", signed = FALSE))
+  n_campos   <- (header_len - 32L - 1L) %/% 32L
+  
+  campos_data <- list()
+  offset_registro <- 1L  # o primeiro byte de cada registro é a marca de exclusão
+  
+  for (i in seq_len(n_campos)) {
+    ini <- 32L + (i - 1L) * 32L + 1L
+    nome_bruto <- bytes[ini:(ini + 10L)]
+    nome_atual <- rawToChar(nome_bruto[nome_bruto != as.raw(0)])
+    tipo       <- rawToChar(bytes[ini + 11L])
+    tamanho    <- as.integer(bytes[ini + 16L])
+    
+    # restaura o nome original dos campos que foram renomeados temporariamente
+    idx <- match(nome_atual, de)
+    if (!is.na(idx)) {
+      novo_raw <- charToRaw(substr(para[idx], 1, 11))
+      novo_raw <- c(novo_raw, raw(11L - length(novo_raw)))
+      bytes[ini:(ini + 10L)] <- novo_raw
+    }
+    
+    # guarda a posição de todo campo tipo Data, para tratar valores ausentes
+    if (tipo == "D") {
+      campos_data[[length(campos_data) + 1L]] <- list(offset = offset_registro, tamanho = tamanho)
+    }
+    offset_registro <- offset_registro + tamanho
+  }
+  
+  if (length(campos_data) > 0 && n_records > 0) {
+    zeros <- charToRaw("00000000")
+    for (rec in seq_len(n_records)) {
+      inicio_registro <- header_len + (rec - 1L) * record_len
+      for (campo in campos_data) {
+        p1 <- inicio_registro + campo$offset + 1L
+        p2 <- p1 + campo$tamanho - 1L
+        if (campo$tamanho == 8L && identical(bytes[p1:p2], zeros)) {
+          bytes[p1:p2] <- as.raw(32L)  # 32 = espaço em branco
+        }
+      }
+    }
+  }
+  
+  writeBin(bytes, caminho_dbf)
+  invisible(TRUE)
+}
+
+# colunas de data com nome > 8 caracteres precisam de um nome temporário
+colunas_data_longas <- colunas_data_presentes[nchar(colunas_data_presentes) > 8]
+nomes_temp_data <- sprintf("DTTMP%02d", seq_along(colunas_data_longas))
+
+df_dbf <- df_processado %>%
+  mutate(across(any_of(colunas_data_presentes), converter_para_data)) %>%
+  mutate(across(-any_of(colunas_data_presentes), as.character)) %>%
+  mutate(across(-any_of(colunas_data_presentes), ~ tidyr::replace_na(., "")))
+
+if (length(colunas_data_longas) > 0) {
+  names(df_dbf)[match(colunas_data_longas, names(df_dbf))] <- nomes_temp_data
+}
+
+write.dbf(as.data.frame(df_dbf), saida_final_dbf)
+ajustar_dbf_datas(saida_final_dbf, de = nomes_temp_data, para = colunas_data_longas)
+
+# --- Conferência automática do DBF gerado ---
+tryCatch({
+  conferencia <- read.dbf(saida_final_dbf, as.is = TRUE)
+  cat("\nConferência das colunas de data no DBF gerado:\n")
+  for (col in colunas_data_presentes) {
+    if (col %in% names(conferencia)) {
+      cat(sprintf("  %-15s classe: %-6s | vazios: %d de %d\n",
+                  col, class(conferencia[[col]])[1],
+                  sum(is.na(conferencia[[col]])), nrow(conferencia)))
+    }
+  }
+}, error = function(e) {
+  message("Aviso: não foi possível conferir o DBF automaticamente (", conditionMessage(e), ")")
+})
+
+message("\n-------------------------------------------------------")
+message(">>> PROCESSAMENTO CONCLUÍDO COM SUCESSO! <<<")
+message(">>> XLSX e DBF salvos. Variáveis adaptadas. <<<")
+message("-------------------------------------------------------")
