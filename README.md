@@ -30,6 +30,8 @@ A rotina considera a documentação técnica da DCC no e-SUS Notifica e as regra
 
 ```text
 dcc-esus-notifica-script/
+├── referencias/
+│   └── MunicipiosEregiaoDeSaude2.csv.gz
 ├── scripts/
 │   ├── script1_padronizacao.R
 │   ├── script2_duplicidades.R
@@ -41,6 +43,45 @@ dcc-esus-notifica-script/
 ├── LICENSE
 └── .gitignore
 ```
+
+---
+
+## Referência de municípios e Regiões de Saúde
+
+O repositório passa a incluir a tabela de referência utilizada neste fluxo:
+
+```text
+referencias/MunicipiosEregiaoDeSaude2.csv.gz
+```
+
+Ela foi armazenada compactada em GZIP para reduzir o tamanho do repositório. O conteúdo é CSV separado por `;` e pode ser lido diretamente pelo `readr`.
+
+Na versão incorporada nesta atualização, a tabela possui:
+
+- 5.571 municípios;
+- 27 Unidades Federativas;
+- código da UF;
+- nome da UF;
+- código da Região de Saúde;
+- Região de Saúde;
+- código municipal de seis dígitos em `CD_MN_RESI`;
+- nome do município;
+- demais campos geográficos e populacionais presentes no arquivo de origem.
+
+A checagem realizada antes da inclusão não encontrou códigos municipais duplicados nem ausência de `CD_MN_RESI`/município.
+
+O arquivo contém dados geográficos/agregados de referência e **não contém registros individuais de DCC**.
+
+### Uso automático
+
+Os Scripts 1, 2.7 e 3 procuram primeiro essa referência dentro do próprio clone do repositório. Se ela for localizada, não é necessário selecioná-la manualmente.
+
+Se a referência não estiver disponível no diretório esperado, os scripts mantêm o comportamento de fallback e abrem uma janela para seleção manual.
+
+O Script 2.7 utiliza a tabela para validar UF × município, identificar homônimos e reconhecer nomes de municípios únicos no Brasil. O Script 3 utiliza `CD_MN_RESI` e a Região de Saúde para os consolidados por UF.
+
+> [!NOTE]
+> Caso a tabela de municípios/regiões seja atualizada futuramente, recomenda-se registrar a origem, data de atualização e revisar os resultados de validação geográfica antes de substituir este arquivo.
 
 ---
 
