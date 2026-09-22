@@ -1121,4 +1121,242 @@ for (idx_arquivo in seq_along(arquivos_base)) {
   )
 
   readr::write_excel_csv2(
-   
+    resumo,
+    arq_resumo,
+    na = ""
+  )
+
+  readr::write_excel_csv2(
+    validacoes,
+    arq_validacao,
+    na = ""
+  )
+
+  # --------------------------------------------------------------------------
+  # 11.5 EXPORTAÇÃO DAS BASES FINAIS
+  # --------------------------------------------------------------------------
+  if (GERAR_CSV) {
+    cat("Salvando CSV final...\n")
+
+    readr::write_excel_csv2(
+      dados_saida,
+      arq_csv,
+      na = ""
+    )
+  }
+
+  if (GERAR_XLSX) {
+    cat("Salvando XLSX final...\n")
+
+    openxlsx::write.xlsx(
+      dados_saida,
+      arq_xlsx,
+      overwrite = TRUE,
+      keepNA = FALSE
+    )
+  }
+
+  if (GERAR_DBF) {
+    cat("Salvando DBF final...\n")
+
+    dados_dbf <- dados_saida
+
+    colunas_data <- intersect(
+      c(
+        "DT_NASC",
+        "DT_NOTIFIC",
+        "DT_OBITO",
+        "DT_ENCERRA",
+        "DT_CRIACAO",
+        "DT_DIGITAC",
+        "DT_DIGITACAO"
+      ),
+      names(dados_dbf)
+    )
+
+    converter_data <- function(x) {
+
+      if (inherits(x, "Date")) {
+        return(x)
+      }
+
+      x <- as.character(x)
+      x[vazio(x)] <- NA_character_
+
+      saida <- as.Date(rep(NA_character_, length(x)))
+
+      idx_br <- !is.na(x) &
+        stringr::str_detect(
+          x,
+          "^\\d{1,2}/\\d{1,2}/\\d{4}$"
+        )
+
+      if (any(idx_br)) {
+        saida[idx_br] <- as.Date(
+          x[idx_br],
+          format = "%d/%m/%Y"
+        )
+      }
+
+      idx_iso <- !is.na(x) &
+        stringr::str_detect(
+          x,
+          "^\\d{4}-\\d{1,2}-\\d{1,2}$"
+        )
+
+      if (any(idx_iso)) {
+        saida[idx_iso] <- as.Date(
+          x[idx_iso],
+          format = "%Y-%m-%d"
+        )
+      }
+
+      idx_num <- !is.na(x) &
+        stringr::str_detect(
+          x,
+          "^\\d+(\\.0+)?$"
+        )
+
+      if (any(idx_num)) {
+
+        n_excel <- suppressWarnings(
+          as.numeric(x[idx_num])
+        )
+
+        ok <- !is.na(n_excel) & n_excel > 300
+
+        tmp <- rep(
+          as.Date(NA),
+          length(n_excel)
+        )
+
+        tmp[ok] <- as.Date(
+          n_excel[ok],
+          origin = "1899-12-30"
+        )
+
+        saida[idx_num] <- tmp
+      }
+
+      saida
+    }
+
+    for (nm in colunas_data) {
+      dados_dbf[[nm]] <- converter_data(
+        dados_dbf[[nm]]
+      )
+    }
+
+    outras <- setdiff(
+      names(dados_dbf),
+      colunas_data
+    )
+
+    for (nm in outras) {
+
+      dados_dbf[[nm]] <- as.character(
+        dados_dbf[[nm]]
+      )
+
+      dados_dbf[[nm]][
+        is.na(dados_dbf[[nm]])
+      ] <- ""
+
+      # DBF tradicional: limita campos texto para evitar erro de largura.
+      dados_dbf[[nm]] <- substr(
+        dados_dbf[[nm]],
+        1,
+        254
+      )
+    }
+
+    foreign::write.dbf(
+      as.data.frame(dados_dbf),
+      arq_dbf
+    )
+  }
+
+  # --------------------------------------------------------------------------
+  # 11.6 RESUMO DA BASE PROCESSADA
+  # --------------------------------------------------------------------------
+  resultados_execucao[[idx_arquivo]] <- tibble::tibble(
+    ARQUIVO_ENTRADA = arquivo_base,
+    NOME_BASE = nome_base,
+    REGISTROS_ENTRADA = n_entrada,
+    REGISTROS_SAIDA = nrow(dados_saida),
+    PASTA_AUDITORIA = dir_auditoria,
+    CSV_FINAL = if (GERAR_CSV) arq_csv else NA_character_,
+    XLSX_FINAL = if (GERAR_XLSX) arq_xlsx else NA_character_,
+    DBF_FINAL = if (GERAR_DBF) arq_dbf else NA_character_
+  )
+
+  cat("\n------------------------------------------------------------\n")
+  cat("BASE CONCLUÍDA\n")
+  cat("------------------------------------------------------------\n")
+  cat("Entrada:     ", basename(arquivo_base), "\n")
+  cat("Registros:   ", n_entrada, "\n")
+
+  if (GERAR_CSV) {
+    cat("CSV final:   ", arq_csv, "\n")
+  }
+
+  if (GERAR_XLSX) {
+    cat("XLSX final:  ", arq_xlsx, "\n")
+  }
+
+  if (GERAR_DBF) {
+    cat("DBF final:   ", arq_dbf, "\n")
+  }
+
+  cat("Auditoria:   ", dir_auditoria, "\n")
+  cat("------------------------------------------------------------\n")
+}
+
+# ------------------------------------------------------------------------------
+# 12. RESULTADO GERAL
+# ------------------------------------------------------------------------------
+resultado_geral <- dplyr::bind_rows(
+  resultados_execucao
+)
+
+cat("\n\n")
+cat("============================================================\n")
+cat("PROCESSAMENTO DE TODAS AS BASES CONCLUÍDO\n")
+cat("============================================================\n")
+cat(
+  "Quantidade de bases processadas: ",
+  nrow(resultado_geral),
+  "\n",
+  sep = ""
+)
+cat("Referência utilizada: ", arquivo_ref, "\n")
+cat("============================================================\n")
+
+for (i in seq_len(nrow(resultado_geral))) {
+
+  cat(
+    sprintf(
+      "\n[%d] %s\n",
+      i,
+      resultado_geral$NOME_BASE[i]
+    )
+  )
+
+  cat(
+    "    Registros: ",
+    resultado_geral$REGISTROS_ENTRADA[i],
+    "\n",
+    sep = ""
+  )
+
+  cat(
+    "    Auditoria: ",
+    resultado_geral$PASTA_AUDITORIA[i],
+    "\n",
+    sep = ""
+  )
+
+  if (GERAR_DBF) {
+    cat(
+      "    DBF: ",
+     
