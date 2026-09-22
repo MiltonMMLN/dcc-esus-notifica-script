@@ -334,6 +334,17 @@ insert_reg_saude_next_to_mun <- function(df) {
   df2
 }
 # =========================
+# 9.1) Compatibilidade de nomes nas abas
+# =========================
+# A versão anterior chamava apply_renames() sem definir a função.
+# Para não alterar o layout técnico já utilizado nas saídas, esta função
+# mantém os nomes originais das variáveis. Um mapa de nomes amigáveis pode
+# ser acrescentado futuramente sem alterar a lógica epidemiológica.
+apply_renames <- function(df) {
+  df
+}
+
+# =========================
 # 10) Função: escrever aba como TABELA e pintar acima de branco
 # =========================
 add_sheet_if_any_w <- function(wb, sheet_name, df, notes = NULL,
