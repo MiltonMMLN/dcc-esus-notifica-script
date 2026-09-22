@@ -298,4 +298,149 @@ if (anyDuplicated(paste(ref$UF_COD, ref$MUN_NORM, sep = "|")) > 0) {
 #
 # Florinia é tratado como alias de Florínea/SP (351610), erro de grafia
 # identificado na base de 2023. A correção só é aplicada quando a UF é SP (35)
-# ou quando um fallback territorial permit
+# ou quando um fallback territorial permitido confirma SP.
+
+excecoes_municipios <- tibble::tribble(
+  ~UF_COD, ~MUN_ALIAS,                            ~MUN_COD,
+  "52",    "Alto Horizonte",                      "520055",
+  "27",    "Arapiraca",                           "270030",
+  "24",    "Augusto Severo",                      "240130",
+  "24",    "Augusto Severo (Campo Grande)",       "240130",
+  "24",    "Campo Grande",                        "240130",
+  "29",    "Barreiras",                           "290320",
+  "31",    "Bonfinopolis de Minas",               "310820",
+  "52",    "Brazabrantes",                        "520360",
+  "35",    "Florinia",                            "351610", # erro de grafia observado na base 2023: Florínea/SP
+  "26",    "Brejinho",                            "260250",
+  "24",    "Brejinho",                            "240180"
+) %>%
+  mutate(
+    MUN_NORM = normalizar_texto(MUN_ALIAS)
+  )
+
+# Garante que os códigos das exceções existam na referência, quando aplicável.
+codigos_ref <- unique(ref$MUN_COD)
+
+exc_invalidas <- excecoes_municipios %>%
+  filter(!(MUN_COD %in% codigos_ref))
+
+if (nrow(exc_invalidas) > 0) {
+  warning(
+    "Há exceções cujo código não foi localizado na referência: ",
+    paste(unique(exc_invalidas$MUN_COD), collapse = ", ")
+  )
+}
+
+# ------------------------------------------------------------------------------
+# 7. TABELA DE UFs E MAPAS DE BUSCA
+# ------------------------------------------------------------------------------
+siglas_uf <- tibble::tribble(
+  ~UF_COD, ~SIGLA,
+  "11","RO", "12","AC", "13","AM", "14","RR", "15","PA", "16","AP", "17","TO",
+  "21","MA", "22","PI", "23","CE", "24","RN", "25","PB", "26","PE", "27","AL",
+  "28","SE", "29","BA", "31","MG", "32","ES", "33","RJ", "35","SP", "41","PR",
+  "42","SC", "43","RS", "50","MS", "51","MT", "52","GO", "53","DF"
+) %>%
+  mutate(SIGLA_NORM = normalizar_texto(SIGLA))
+
+ufs_ref <- ref %>%
+  distinct(UF_COD, UF_NOME, UF_NORM) %>%
+  left_join(siglas_uf, by = "UF_COD")
+
+uf_por_nome  <- stats::setNames(ufs_ref$UF_COD, ufs_ref$UF_NORM)
+uf_por_sigla <- stats::setNames(ufs_ref$UF_COD, ufs_ref$SIGLA_NORM)
+uf_por_mun_cod <- stats::setNames(ref$UF_COD, ref$MUN_COD)
+
+mapa_ref_nome <- stats::setNames(
+  ref$MUN_COD,
+  paste(ref$UF_COD, ref$MUN_NORM, sep = "|")
+)
+
+mapa_exc_nome <- stats::setNames(
+  excecoes_municipios$MUN_COD,
+  paste(excecoes_municipios$UF_COD, excecoes_municipios$MUN_NORM, sep = "|")
+)
+
+# Municípios cujo NOME NORMALIZADO identifica um único município no Brasil.
+# A unicidade é calculada EXCLUSIVAMENTE a partir da tabela oficial selecionada.
+# As exceções manuais acima NÃO entram nesta inferência sem UF.
+municipios_unicos_nacional <- ref %>%
+  group_by(MUN_NORM) %>%
+  summarise(
+    N_MUNICIPIOS = n_distinct(MUN_COD),
+    MUN_COD_UNICO = if (n_distinct(MUN_COD) == 1) first(MUN_COD) else NA_character_,
+    UF_COD_UNICA = if (n_distinct(MUN_COD) == 1) first(UF_COD) else NA_character_,
+    .groups = "drop"
+  ) %>%
+  filter(N_MUNICIPIOS == 1, !is.na(MUN_COD_UNICO), !is.na(UF_COD_UNICA))
+
+mapa_unico_cod <- stats::setNames(
+  municipios_unicos_nacional$MUN_COD_UNICO,
+  municipios_unicos_nacional$MUN_NORM
+)
+
+mapa_unico_uf <- stats::setNames(
+  municipios_unicos_nacional$UF_COD_UNICA,
+  municipios_unicos_nacional$MUN_NORM
+)
+
+resolver_uf <- function(x) {
+  x_chr <- as.character(x)
+
+  cod_direto <- normalizar_codigo_uf(x_chr)
+  cod_direto[!(cod_direto %in% ufs_ref$UF_COD)] <- NA_character_
+
+  n <- normalizar_texto(x_chr)
+  por_nome  <- unname(uf_por_nome[n])
+  por_sigla <- unname(uf_por_sigla[n])
+
+  dplyr::coalesce(cod_direto, por_nome, por_sigla)
+}
+
+codigo_valido_ref <- function(x) {
+  cod <- normalizar_codigo_mun(x)
+  ifelse(!is.na(cod) & cod %in% ref$MUN_COD, cod, NA_character_)
+}
+
+uf_do_codigo <- function(x) {
+  cod <- codigo_valido_ref(x)
+  unname(uf_por_mun_cod[cod])
+}
+
+buscar_codigo_nome_uf <- function(nome, uf_cod) {
+  nome_norm <- normalizar_texto(nome)
+
+  chave <- ifelse(
+    !is.na(nome_norm) & !is.na(uf_cod),
+    paste(uf_cod, nome_norm, sep = "|"),
+    NA_character_
+  )
+
+  # Exceção explícita tem prioridade, mas SOMENTE porque a chave inclui a UF.
+  por_exc <- unname(mapa_exc_nome[chave])
+  por_ref <- unname(mapa_ref_nome[chave])
+
+  dplyr::coalesce(por_exc, por_ref)
+}
+
+buscar_codigo_nome_unico_nacional <- function(nome) {
+  nome_norm <- normalizar_texto(nome)
+  unname(mapa_unico_cod[nome_norm])
+}
+
+buscar_uf_nome_unico_nacional <- function(nome) {
+  nome_norm <- normalizar_texto(nome)
+  unname(mapa_unico_uf[nome_norm])
+}
+
+# Usa os dois primeiros dígitos de um código municipal para confirmar a UF.
+# Não transforma esse código em "válido" por si só; serve apenas como apoio
+# territorial quando o prefixo corresponde a uma UF oficial.
+uf_por_prefixo_codigo_municipio <- function(x) {
+  cod <- normalizar_codigo_mun(x)
+  pref <- ifelse(!is.na(cod), substr(cod, 1, 2), NA_character_)
+  ifelse(!is.na(pref) & pref %in% ufs_ref$UF_COD, pref, NA_character_)
+}
+
+# ------------------------------------------------------------------------------
+# 8. AP
