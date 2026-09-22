@@ -222,18 +222,25 @@ for (i in seq_along(arquivos_base)) {
 }
 
 localizar_referencia_bundled <- function() {
-  nome_ref <- "MunicipiosEregiaoDeSaude2.csv.gz"
-
-  candidatos <- c(
-    file.path(getwd(), "referencias", nome_ref),
-    file.path(getwd(), "..", "referencias", nome_ref),
-    file.path(getwd(), nome_ref)
+  candidatos_dir <- c(
+    file.path(getwd(), "referencias", "MunicipiosEregiaoDeSaude2"),
+    file.path(getwd(), "..", "referencias", "MunicipiosEregiaoDeSaude2")
   )
 
-  candidatos <- unique(candidatos[file.exists(candidatos)])
+  for (dir_ref in candidatos_dir) {
+    if (dir.exists(dir_ref)) {
+      arquivos <- list.files(
+        dir_ref,
+        pattern = "^parte_[0-9]{3}\\.csv$",
+        full.names = TRUE
+      )
 
-  if (length(candidatos) > 0) {
-    return(normalizePath(candidatos[1], winslash = "/", mustWork = TRUE))
+      arquivos <- sort(arquivos)
+
+      if (length(arquivos) > 0) {
+        return(normalizePath(arquivos, winslash = "/", mustWork = TRUE))
+      }
+    }
   }
 
   NA_character_
@@ -245,7 +252,7 @@ if (is.na(arquivo_ref)) {
   message("")
   message("------------------------------------------------------------")
   message("SELECIONE UMA ÚNICA VEZ A TABELA MunicipiosEregiaoDeSaude2")
-  message("Aceita CSV ou CSV.GZ. Ela será utilizada para todas as bases.")
+  message("Selecione o CSV de referência. Ele será utilizado para todas as bases.")
   message("------------------------------------------------------------")
   Sys.sleep(0.5)
 
@@ -261,7 +268,11 @@ if (is.na(arquivo_ref)) {
 # 5. LEITURA DA TABELA DE REFERÊNCIA
 # ------------------------------------------------------------------------------
 cat("\nLendo a tabela de municípios...\n")
-ref_bruta <- ler_csv_flex(arquivo_ref)
+ref_bruta <- if (length(arquivo_ref) > 1) {
+  dplyr::bind_rows(lapply(arquivo_ref, ler_csv_flex))
+} else {
+  ler_csv_flex(arquivo_ref)
+}
 
 col_ref_uf_cod <- localizar_coluna(
   names(ref_bruta),
