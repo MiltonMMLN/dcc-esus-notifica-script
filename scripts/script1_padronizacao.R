@@ -28,18 +28,25 @@ input_file <- file.choose()
 
 # 2. Localizar/selecionar Arquivo de Municípios
 localizar_referencia_bundled <- function() {
-  nome_ref <- "MunicipiosEregiaoDeSaude2.csv.gz"
-
-  candidatos <- c(
-    file.path(getwd(), "referencias", nome_ref),
-    file.path(getwd(), "..", "referencias", nome_ref),
-    file.path(getwd(), nome_ref)
+  candidatos_dir <- c(
+    file.path(getwd(), "referencias", "MunicipiosEregiaoDeSaude2"),
+    file.path(getwd(), "..", "referencias", "MunicipiosEregiaoDeSaude2")
   )
 
-  candidatos <- unique(candidatos[file.exists(candidatos)])
+  for (dir_ref in candidatos_dir) {
+    if (dir.exists(dir_ref)) {
+      arquivos <- list.files(
+        dir_ref,
+        pattern = "^parte_[0-9]{3}\\.csv$",
+        full.names = TRUE
+      )
 
-  if (length(candidatos) > 0) {
-    return(normalizePath(candidatos[1], winslash = "/", mustWork = TRUE))
+      arquivos <- sort(arquivos)
+
+      if (length(arquivos) > 0) {
+        return(normalizePath(arquivos, winslash = "/", mustWork = TRUE))
+      }
+    }
   }
 
   NA_character_
@@ -49,7 +56,7 @@ reference_file <- localizar_referencia_bundled()
 
 if (is.na(reference_file)) {
   message("-------------------------------------------------------")
-  message(">>> SELECIONE A TABELA DE MUNICÍPIOS (.csv ou .csv.gz) <<<")
+  message(">>> SELECIONE A TABELA DE MUNICÍPIOS (.csv) <<<")
   message("-------------------------------------------------------")
   Sys.sleep(1)
   reference_file <- file.choose()
@@ -104,16 +111,24 @@ cat("Lendo arquivo de municípios...\n")
 # Compatibilidade com o layout antigo da referência
 # (nome_municipio / uf / codigo_ibge) e com o arquivo atualmente utilizado
 # (Municipio / UF / CD_MN_RESI).
-referencia_raw <- read_delim(
-  reference_file,
-  delim = ";",
-  locale = locale(encoding = "Latin1"),
-  show_col_types = FALSE,
-  quote = "\"",
-  col_types = cols(.default = col_character())
-) %>%
-  mutate(across(where(is.character), corrigir_mojibake)) %>%
-  mutate(across(where(is.character), stringi::stri_enc_toutf8))
+ler_referencia_parte <- function(caminho) {
+  read_delim(
+    caminho,
+    delim = ";",
+    locale = locale(encoding = "UTF-8"),
+    show_col_types = FALSE,
+    quote = "\"",
+    col_types = cols(.default = col_character())
+  ) %>%
+    mutate(across(where(is.character), corrigir_mojibake)) %>%
+    mutate(across(where(is.character), stringi::stri_enc_toutf8))
+}
+
+referencia_raw <- if (length(reference_file) > 1) {
+  dplyr::bind_rows(lapply(reference_file, ler_referencia_parte))
+} else {
+  ler_referencia_parte(reference_file)
+}
 
 localizar_coluna_ref <- function(nomes, candidatos) {
   nomes_norm <- nomes %>%
