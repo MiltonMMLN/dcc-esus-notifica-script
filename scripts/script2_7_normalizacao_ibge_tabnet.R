@@ -948,4 +948,82 @@ pares <- list(
   list(
     uf = "ANT_UF_ESP",
     mun = "ANT_MUN",
-    codi
+    codigo_candidatos = c("CD_ANT_MUN"),
+    descricao = "Nova unidade especializada",
+    fallback_residencia = FALSE
+  )
+)
+
+# ------------------------------------------------------------------------------
+# 10. PROCESSAMENTO DE CADA PAR UF/MUNICÍPIO
+# ------------------------------------------------------------------------------
+auditorias <- list()
+
+processar_par <- function(df, par) {
+  campo_uf  <- par$uf
+  campo_mun <- par$mun
+
+  if (!(campo_uf %in% names(df)) || !(campo_mun %in% names(df))) {
+    message(
+      "Ignorado: ", par$descricao,
+      " (ausência de ", campo_uf, " ou ", campo_mun, ")."
+    )
+    return(df)
+  }
+
+  campo_cd <- par$codigo_candidatos[
+    par$codigo_candidatos %in% names(df)
+  ][1]
+
+  if (length(campo_cd) == 0 || is.na(campo_cd)) {
+    campo_cd <- NA_character_
+  }
+
+  n <- nrow(df)
+
+  uf_original  <- as.character(df[[campo_uf]])
+  mun_original <- as.character(df[[campo_mun]])
+
+  cd_original <- if (!is.na(campo_cd)) {
+    as.character(df[[campo_cd]])
+  } else {
+    rep(NA_character_, n)
+  }
+
+  # Apoio da residência é recalculado a cada par, pois o par de residência
+  # é processado antes dos demais campos que podem usar esse fallback.
+  apoio_res <- obter_apoio_residencia(df)
+
+  uf_pair <- resolver_uf(uf_original)
+
+  cd_existente <- codigo_valido_ref(cd_original)
+  mun_como_cod <- codigo_valido_ref(mun_original)
+
+  uf_cd_existente <- uf_do_codigo(cd_existente)
+  uf_mun_como_cod <- uf_do_codigo(mun_como_cod)
+
+  # Código pelo nome usando a UF específica do campo.
+  cod_nome_pair <- buscar_codigo_nome_uf(mun_original, uf_pair)
+
+  # Regra adicional: se o nome identifica UM ÚNICO município no Brasil na
+  # referência, ele pode ser resolvido sem depender da UF do campo.
+  cod_nome_unico <- buscar_codigo_nome_unico_nacional(mun_original)
+  uf_nome_unico  <- buscar_uf_nome_unico_nacional(mun_original)
+
+  # Sinal forte de código já disponível.
+  codigo_forte <- dplyr::coalesce(
+    cd_existente,
+    mun_como_cod
+  )
+
+  uf_codigo_forte <- dplyr::coalesce(
+    uf_cd_existente,
+    uf_mun_como_cod
+  )
+
+  # Valida se o código forte combina com a UF do próprio campo.
+  forte_compativel_pair <- (
+    !is.na(codigo_forte) &
+    !is.na(uf_pair) &
+    !is.na(uf_codigo_forte) &
+    uf_codigo_
