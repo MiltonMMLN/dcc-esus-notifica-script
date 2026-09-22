@@ -710,4 +710,81 @@ mapa_exc_nome <- stats::setNames(
 
 # Municípios cujo NOME NORMALIZADO identifica um único município no Brasil.
 # A unicidade é calculada EXCLUSIVAMENTE a partir da tabela oficial selecionada.
-# As exceções manuais acima NÃO entram nesta inferÀ
+# As exceções manuais acima NÃO entram nesta inferÀ򮣩a sem UF.
+municipios_unicos_nacional <- ref %>%
+  group_by(MUN_NORM) %>%
+  summarise(
+    N_MUNICIPIOS = n_distinct(MUN_COD),
+    MUN_COD_UNICO = if (n_distinct(MUN_COD) == 1) first(MUN_COD) else NA_character_,
+    UF_COD_UNICA = if (n_distinct(MUN_COD) == 1) first(UF_COD) else NA_character_,
+    .groups = "drop"
+  ) %>%
+  filter(N_MUNICIPIOS == 1, !is.na(MUN_COD_UNICO), !is.na(UF_COD_UNICA))
+
+mapa_unico_cod <- stats::setNames(
+  municipios_unicos_nacional$MUN_COD_UNICO,
+  municipios_unicos_nacional$MUN_NORM
+)
+
+mapa_unico_uf <- stats::setNames(
+  municipios_unicos_nacional$UF_COD_UNICA,
+  municipios_unicos_nacional$MUN_NORM
+)
+
+resolver_uf <- function(x) {
+  x_chr <- as.character(x)
+
+  cod_direto <- normalizar_codigo_uf(x_chr)
+  cod_direto[!(cod_direto %in% ufs_ref$UF_COD)] <- NA_character_
+
+  n <- normalizar_texto(x_chr)
+  por_nome  <- unname(uf_por_nome[n])
+  por_sigla <- unname(uf_por_sigla[n])
+
+  dplyr::coalesce(cod_direto, por_nome, por_sigla)
+}
+
+codigo_valido_ref <- function(x) {
+  cod <- normalizar_codigo_mun(x)
+  ifelse(!is.na(cod) & cod %in% ref$MUN_COD, cod, NA_character_)
+}
+
+uf_do_codigo <- function(x) {
+  cod <- codigo_valido_ref(x)
+  unname(uf_por_mun_cod[cod])
+}
+
+buscar_codigo_nome_uf <- function(nome, uf_cod) {
+  nome_norm <- normalizar_texto(nome)
+
+  chave <- ifelse(
+    !is.na(nome_norm) & !is.na(uf_cod),
+    paste(uf_cod, nome_norm, sep = "|"),
+    NA_character_
+  )
+
+  # Exceção explícita tem prioridade, mas SOMENTE porque a chave inclui a UF.
+  por_exc <- unname(mapa_exc_nome[chave])
+  por_ref <- unname(mapa_ref_nome[chave])
+
+  dplyr::coalesce(por_exc, por_ref)
+}
+
+buscar_codigo_nome_unico_nacional <- function(nome) {
+  nome_norm <- normalizar_texto(nome)
+  unname(mapa_unico_cod[nome_norm])
+}
+
+buscar_uf_nome_unico_nacional <- function(nome) {
+  nome_norm <- normalizar_texto(nome)
+  unname(mapa_unico_uf[nome_norm])
+}
+
+# Usa os dois primeiros dígitos de um código municipal para confirmar a UF.
+# Não transforma esse código em "válido" por si só; serve apenas como apoio
+# territorial quando o prefixo corresponde a uma UF oficial.
+uf_por_prefixo_codigo_municipio <- function(x) {
+  cod <- normalizar_codigo_mun(x)
+  pref <- ifelse(!is.na(cod), substr(cod, 1, 2), NA_character_)
+  ifelse(!is.na(pref) & pref %in% ufs_ref$UF_COD, pref, NA_character_)
+}
