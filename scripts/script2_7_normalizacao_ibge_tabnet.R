@@ -788,3 +788,80 @@ uf_por_prefixo_codigo_municipio <- function(x) {
   pref <- ifelse(!is.na(cod), substr(cod, 1, 2), NA_character_)
   ifelse(!is.na(pref) & pref %in% ufs_ref$UF_COD, pref, NA_character_)
 }
+s.na(pref) & pref %in% ufs_ref$UF_COD, pref, NA_character_)
+}
+
+# ------------------------------------------------------------------------------
+# 8. APOIO DA RESIDÊNCIA
+# ------------------------------------------------------------------------------
+# Esta função calcula uma UF de residência "confirmada".
+#
+# Hierarquia:
+#   1) código municipal válido em ID_MN_RESI;
+#   2) código municipal válido em CD_MN_RESI;
+#   3) SG_UF, se válido;
+#   4) nome de ID_MN_RESI + SG_UF, quando possível.
+#
+# Se SG_UF conflitar com um código municipal válido de residência,
+# prevalece a UF pertencente ao código municipal.
+
+obter_apoio_residencia <- function(df) {
+  n <- nrow(df)
+
+  sg_uf <- if ("SG_UF" %in% names(df)) {
+    resolver_uf(df$SG_UF)
+  } else {
+    rep(NA_character_, n)
+  }
+
+  id_mn_raw <- if ("ID_MN_RESI" %in% names(df)) {
+    as.character(df$ID_MN_RESI)
+  } else {
+    rep(NA_character_, n)
+  }
+
+  cd_mn_raw <- if ("CD_MN_RESI" %in% names(df)) {
+    as.character(df$CD_MN_RESI)
+  } else {
+    rep(NA_character_, n)
+  }
+
+  id_mn_cod <- codigo_valido_ref(id_mn_raw)
+  cd_mn_cod <- codigo_valido_ref(cd_mn_raw)
+
+  # Se ID_MN_RESI estiver descritivo, tenta nome + SG_UF.
+  cod_nome_res <- buscar_codigo_nome_uf(id_mn_raw, sg_uf)
+
+  # Se o nome de residência for único no Brasil, também pode ser identificado
+  # sem SG_UF. Isso não usa a tabela de exceções; usa somente a referência.
+  cod_nome_unico_res <- buscar_codigo_nome_unico_nacional(id_mn_raw)
+
+  cod_res <- dplyr::coalesce(
+    id_mn_cod,
+    cd_mn_cod,
+    cod_nome_res,
+    cod_nome_unico_res
+  )
+
+  uf_por_cod_res <- uf_do_codigo(cod_res)
+
+  # Confirmação adicional pela regra estrutural do código municipal:
+  # os 2 primeiros dígitos correspondem ao código da UF.
+  uf_prefixo_id <- uf_por_prefixo_codigo_municipio(id_mn_raw)
+  uf_prefixo_cd <- uf_por_prefixo_codigo_municipio(cd_mn_raw)
+  uf_por_prefixo_res <- dplyr::coalesce(
+    uf_prefixo_id,
+    uf_prefixo_cd
+  )
+
+  # Hierarquia de confirmação da UF de residência:
+  # 1) município de residência reconhecido na referência;
+  # 2) prefixo do código de ID_MN_RESI/CD_MN_RESI;
+  # 3) SG_UF.
+  uf_res_confirmada <- dplyr::coalesce(
+    uf_por_cod_res,
+    uf_por_prefixo_res,
+    sg_uf
+  )
+
+  con
