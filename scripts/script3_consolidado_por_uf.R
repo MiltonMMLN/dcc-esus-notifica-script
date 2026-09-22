@@ -21,18 +21,25 @@ arq_dcc <- file.choose()
 message("Selecione o ARQUIVO DCA (.csv, UTF-8 BOM, ;)")
 arq_dca <- file.choose()
 localizar_referencia_bundled <- function() {
-  nome_ref <- "MunicipiosEregiaoDeSaude2.csv.gz"
-
-  candidatos <- c(
-    file.path(getwd(), "referencias", nome_ref),
-    file.path(getwd(), "..", "referencias", nome_ref),
-    file.path(getwd(), nome_ref)
+  candidatos_dir <- c(
+    file.path(getwd(), "referencias", "MunicipiosEregiaoDeSaude2"),
+    file.path(getwd(), "..", "referencias", "MunicipiosEregiaoDeSaude2")
   )
 
-  candidatos <- unique(candidatos[file.exists(candidatos)])
+  for (dir_ref in candidatos_dir) {
+    if (dir.exists(dir_ref)) {
+      arquivos <- list.files(
+        dir_ref,
+        pattern = "^parte_[0-9]{3}\\.csv$",
+        full.names = TRUE
+      )
 
-  if (length(candidatos) > 0) {
-    return(normalizePath(candidatos[1], winslash = "/", mustWork = TRUE))
+      arquivos <- sort(arquivos)
+
+      if (length(arquivos) > 0) {
+        return(normalizePath(arquivos, winslash = "/", mustWork = TRUE))
+      }
+    }
   }
 
   NA_character_
@@ -41,7 +48,7 @@ localizar_referencia_bundled <- function() {
 arq_reg <- localizar_referencia_bundled()
 
 if (is.na(arq_reg)) {
-  message("Selecione o ARQUIVO das Regiões de Saúde (.csv/.csv.gz, UTF-8, ; ou ,)")
+  message("Selecione o ARQUIVO das Regiões de Saúde (.csv, UTF-8, ; ou ,)")
   arq_reg <- file.choose()
 } else {
   message("Referência de municípios/regiões localizada automaticamente no repositório:")
@@ -238,13 +245,21 @@ nu_dcc_confirmado_fmt <- matches_best$NU_NOTIFIC_DCC_FMT
 # 9) REGIÃO DE SAÚDE (PROCV) — join 100% via CD_MN_RESI
 # =========================
 ler_reg_saude <- function(caminho) {
-  # tenta ler com ; e, se vier tudo numa coluna, tenta ,
-  try1 <- try(ler_csv_padrao(caminho, delim = ";"), silent = TRUE)
-  if (inherits(try1, "try-error")) try1 <- NULL
-  df <- try1
-  if (is.null(df) || ncol(df) == 1) {
-    try2 <- try(ler_csv_padrao(caminho, delim = ","), silent = TRUE)
-    if (!inherits(try2, "try-error")) df <- try2
+  # Quando a referência versionada do repositório estiver disponível,
+  # os arquivos parte_*.csv são combinados automaticamente.
+  if (length(caminho) > 1) {
+    df <- dplyr::bind_rows(lapply(caminho, function(p) {
+      ler_csv_padrao(p, delim = ";")
+    }))
+  } else {
+    # tenta ler com ; e, se vier tudo numa coluna, tenta ,
+    try1 <- try(ler_csv_padrao(caminho, delim = ";"), silent = TRUE)
+    if (inherits(try1, "try-error")) try1 <- NULL
+    df <- try1
+    if (is.null(df) || ncol(df) == 1) {
+      try2 <- try(ler_csv_padrao(caminho, delim = ","), silent = TRUE)
+      if (!inherits(try2, "try-error")) df <- try2
+    }
   }
   if (is.null(df)) stop("Falha ao ler o arquivo de Regiões de Saúde.")
   
