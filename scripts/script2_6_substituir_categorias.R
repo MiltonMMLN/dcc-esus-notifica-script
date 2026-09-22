@@ -193,4 +193,101 @@ df_processado <- df %>%
     MUD_UBS_AC = case_when(MUD_UBS_AC %==% "Sim" ~ "1", MUD_UBS_AC %==% "Nao" ~ "2", TRUE ~ as.character(MUD_UBS_AC)),
     NOVO_ESPEC = case_when(NOVO_ESPEC %==% "Sim" ~ "1", NOVO_ESPEC %==% "Nao" ~ "2", TRUE ~ as.character(NOVO_ESPEC)),
     ST_ENCERRA = case_when(
-      ST_ENCERRA %==% "Permanece em acompanhamento clinico" ~ 
+      ST_ENCERRA %==% "Permanece em acompanhamento clinico" ~ "1",
+      ST_ENCERRA %==% "Obito por d. Chagas" ~ "2",
+      ST_ENCERRA %==% "Obito por outras causas" ~ "3",
+      ST_ENCERRA %==% "Abandono" ~ "4",
+      ST_ENCERRA %==% "Cancelado/Excluir" ~ "5",
+      ST_ENCERRA %==% "Em aberto" ~ "9",
+      TRUE ~ as.character(ST_ENCERRA)
+    )
+  )
+
+# ============================================================
+# 6. AJUSTES CONDICIONAIS (REAÇÕES ADVERSAS)
+# ============================================================
+cat("\nAplicando ajustes com condicionais de reações adversas...\n")
+df_processado <- df_processado %>%
+  mutate(
+    ADVERS_BNZ = case_when(ADVERS_BNZ %==% "Sem reacoes" ~ "2", TRUE ~ as.character(ADVERS_BNZ)),
+    
+    BNZ_LEVE   = case_when(ADVERS_BNZ %==% "2" ~ "2", BNZ_LEVE %==% "Dermopatia leve/moderada" ~ "1", TRUE ~ as.character(BNZ_LEVE)),
+    BNZ_GRAVE  = case_when(ADVERS_BNZ %==% "2" ~ "2", BNZ_GRAVE %==% "Dermopatia grave" ~ "1", TRUE ~ as.character(BNZ_GRAVE)),
+    BNZ_AUGESI = case_when(ADVERS_BNZ %==% "2" ~ "2", BNZ_AUGESI %==% "Ageusia" ~ "1", TRUE ~ as.character(BNZ_AUGESI)),
+    BNZ_PAREST = case_when(ADVERS_BNZ %==% "2" ~ "2", BNZ_PAREST %==% "Parestesias" ~ "1", TRUE ~ as.character(BNZ_PAREST)),
+    BNZ_DEPRE  = case_when(ADVERS_BNZ %==% "2" ~ "2", BNZ_DEPRE %==% "Depressao medula ossea" ~ "1", TRUE ~ as.character(BNZ_DEPRE)),
+    BNZ_GASTRO = case_when(ADVERS_BNZ %==% "2" ~ "2", BNZ_GASTRO %==% "Intolerancia gastrointestinal" ~ "1", TRUE ~ as.character(BNZ_GASTRO)),
+    BNZ_ARTRAL = case_when(ADVERS_BNZ %==% "2" ~ "2", BNZ_ARTRAL %==% "Artralgias" ~ "1", TRUE ~ as.character(BNZ_ARTRAL)),
+    REAC_BNZ   = case_when(ADVERS_BNZ %==% "2" ~ "2", REAC_BNZ %==% "Outras" ~ "1", TRUE ~ as.character(REAC_BNZ)),
+    
+    ADVERS_NFX = case_when(ADVERS_NFX %==% "Sem reacoes" ~ "2", TRUE ~ as.character(ADVERS_NFX)),
+    
+    NFX_LEVE   = case_when(ADVERS_NFX %==% "2" ~ "2", NFX_LEVE %==% "Dermopatia leve/moderada" ~ "1", TRUE ~ as.character(NFX_LEVE)),
+    NFX_GRAVE  = case_when(ADVERS_NFX %==% "2" ~ "2", NFX_GRAVE %==% "Dermopatia grave" ~ "1", TRUE ~ as.character(NFX_GRAVE)),
+    NFX_AGEUSI = case_when(ADVERS_NFX %==% "2" ~ "2", NFX_AGEUSI %==% "Ageusia" ~ "1", TRUE ~ as.character(NFX_AGEUSI)),
+    NFX_PAREST = case_when(ADVERS_NFX %==% "2" ~ "2", NFX_PAREST %==% "Parestesias" ~ "1", TRUE ~ as.character(NFX_PAREST)),
+    NFX_MEDULA = case_when(ADVERS_NFX %==% "2" ~ "2", NFX_MEDULA %==% "Depressao medula ossea" ~ "1", TRUE ~ as.character(NFX_MEDULA)),
+    NFX_GASTRO = case_when(ADVERS_NFX %==% "2" ~ "2", NFX_GASTRO %==% "Intolerancia gastrointestinal" ~ "1", TRUE ~ as.character(NFX_GASTRO)),
+    NFX_ARTRAL = case_when(ADVERS_NFX %==% "2" ~ "2", NFX_ARTRAL %==% "Artralgias" ~ "1", TRUE ~ as.character(NFX_ARTRAL)),
+    REAC_NFX   = case_when(ADVERS_NFX %==% "2" ~ "2", REAC_NFX %==% "Outras" ~ "1", TRUE ~ as.character(REAC_NFX))
+  )
+
+# ============================================================
+# 7. CONVERSÃO DE FORMATOS (DATAS COMO OBJETOS DATE)
+# ============================================================
+cat("\nFormatando datas como objetos nativos e ajustando textos...\n")
+
+converter_para_data <- function(x) {
+  x_char <- as.character(x)
+  vazio  <- is.na(x_char) | x_char == "" | x_char == "NA" | x_char == "NULL" | x_char == "00000000"
+  resultado <- rep(as.Date(NA), length(x_char))
+  
+  for (i in seq_along(x_char)) {
+    if (vazio[i]) next
+    val <- x_char[i]
+    
+    # 1. Se vier como número serial do Excel
+    if (grepl("^[0-9]+$", val)) {
+      num_val <- as.numeric(val)
+      if (num_val > 300) {
+        dt_conv <- suppressWarnings(as.Date(num_val, origin = "1899-12-30"))
+        if (!is.na(dt_conv)) {
+          resultado[i] <- dt_conv
+          next
+        }
+      }
+    }
+    
+    # 2. Se vier como texto de data
+    dt_parsed <- suppressWarnings(parse_date_time(val, orders = c("Ymd", "dmY", "dmy", "ymd", "Y-m-d", "d/m/Y", "d/m/y"), quiet = TRUE))
+    if (!is.na(dt_parsed)) {
+      resultado[i] <- as.Date(dt_parsed)
+    }
+  }
+  return(resultado)
+}
+
+# AQUI FOI AJUSTADO DT_DIGITACAO PARA DT_DIGITAC
+colunas_data <- c("DT_NASC", "DT_NOTIFIC", "DT_OBITO", "DT_ENCERRA", "DT_CRIACAO", "DT_DIGITAC")
+colunas_data_presentes <- intersect(colunas_data, names(df_processado))
+
+# Versão para o XLSX: Mantém vazios reais como NA (para o Excel ignorar nas contagens)
+df_processado_xlsx <- df_processado %>%
+  mutate(across(-any_of(colunas_data_presentes), as.character)) %>%
+  mutate(across(any_of(colunas_data_presentes), converter_para_data)) %>%
+  mutate(across(where(is.character), ~ na_if(.x, ""))) # Converte strings vazias "" em NA real
+
+# ============================================================
+# 8. EXPORTAÇÃO DOS ARQUIVOS (XLSX E DBF)
+# ============================================================
+cat("\nSalvando arquivos...\n")
+
+# --- 1. Exportar XLSX com vazios reais (NA) para contagens corretas ---
+wb <- createWorkbook()
+addWorksheet(wb, "Dados_Ajustados")
+writeData(wb, 1, df_processado_xlsx)
+
+dateStyle <- createStyle(numFmt = "DD/MM/YYYY")
+date_col_indices <- which(names(df_processado_xlsx) %in% colunas_data_presentes)
+
+if (length(date_col_indices) > 0 && nrow(df_processado_xlsx) > 0) 
