@@ -653,4 +653,61 @@ processar_par <- function(df, par) {
   uf_cd_existente <- uf_do_codigo(cd_existente)
   uf_mun_como_cod <- uf_do_codigo(mun_como_cod)
 
-  # Código pelo nome usando a UF especÀ
+  # Código pelo nome usando a UF especÀande",                        "240130",
+  "29",    "Barreiras",                           "290320",
+  "31",    "Bonfinopolis de Minas",               "310820",
+  "52",    "Brazabrantes",                        "520360",
+  "35",    "Florinia",                            "351610", # erro de grafia observado na base 2023: Florínea/SP
+  "26",    "Brejinho",                            "260250",
+  "24",    "Brejinho",                            "240180"
+) %>%
+  mutate(
+    MUN_NORM = normalizar_texto(MUN_ALIAS)
+  )
+
+# Garante que os códigos das exceções existam na referência, quando aplicável.
+codigos_ref <- unique(ref$MUN_COD)
+
+exc_invalidas <- excecoes_municipios %>%
+  filter(!(MUN_COD %in% codigos_ref))
+
+if (nrow(exc_invalidas) > 0) {
+  warning(
+    "Há exceções cujo código não foi localizado na referência: ",
+    paste(unique(exc_invalidas$MUN_COD), collapse = ", ")
+  )
+}
+
+# ------------------------------------------------------------------------------
+# 7. TABELA DE UFs E MAPAS DE BUSCA
+# ------------------------------------------------------------------------------
+siglas_uf <- tibble::tribble(
+  ~UF_COD, ~SIGLA,
+  "11","RO", "12","AC", "13","AM", "14","RR", "15","PA", "16","AP", "17","TO",
+  "21","MA", "22","PI", "23","CE", "24","RN", "25","PB", "26","PE", "27","AL",
+  "28","SE", "29","BA", "31","MG", "32","ES", "33","RJ", "35","SP", "41","PR",
+  "42","SC", "43","RS", "50","MS", "51","MT", "52","GO", "53","DF"
+) %>%
+  mutate(SIGLA_NORM = normalizar_texto(SIGLA))
+
+ufs_ref <- ref %>%
+  distinct(UF_COD, UF_NOME, UF_NORM) %>%
+  left_join(siglas_uf, by = "UF_COD")
+
+uf_por_nome  <- stats::setNames(ufs_ref$UF_COD, ufs_ref$UF_NORM)
+uf_por_sigla <- stats::setNames(ufs_ref$UF_COD, ufs_ref$SIGLA_NORM)
+uf_por_mun_cod <- stats::setNames(ref$UF_COD, ref$MUN_COD)
+
+mapa_ref_nome <- stats::setNames(
+  ref$MUN_COD,
+  paste(ref$UF_COD, ref$MUN_NORM, sep = "|")
+)
+
+mapa_exc_nome <- stats::setNames(
+  excecoes_municipios$MUN_COD,
+  paste(excecoes_municipios$UF_COD, excecoes_municipios$MUN_NORM, sep = "|")
+)
+
+# Municípios cujo NOME NORMALIZADO identifica um único município no Brasil.
+# A unicidade é calculada EXCLUSIVAMENTE a partir da tabela oficial selecionada.
+# As exceções manuais acima NÃO entram nesta inferÀ
