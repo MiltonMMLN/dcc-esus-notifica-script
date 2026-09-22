@@ -1026,4 +1026,69 @@ processar_par <- function(df, par) {
     !is.na(codigo_forte) &
     !is.na(uf_pair) &
     !is.na(uf_codigo_forte) &
-    uf_codigo_
+    uf_codigo_forte == uf_pair
+  )
+
+  # ---------------------------------------------------------------------------
+  # 10.1 CANDIDATO PELO APOIO DA RESIDÊNCIA
+  # ---------------------------------------------------------------------------
+  uf_res <- apoio_res$RES_UF_CONFIRMADA
+
+  cod_nome_res <- if (isTRUE(par$fallback_residencia)) {
+    buscar_codigo_nome_uf(mun_original, uf_res)
+  } else {
+    rep(NA_character_, n)
+  }
+
+  # Para aceitar fallback de residência:
+  # - deve haver município preenchido;
+  # - o MESMO nome deve existir na UF de residência confirmada.
+  fallback_res_valido <- (
+    isTRUE(par$fallback_residencia) &
+    !vazio(mun_original) &
+    !is.na(uf_res) &
+    !is.na(cod_nome_res)
+  )
+
+  # ---------------------------------------------------------------------------
+  # 10.2 ESCOLHA DO RESULTADO
+  # ---------------------------------------------------------------------------
+  uf_final  <- rep(NA_character_, n)
+  cod_final <- rep(NA_character_, n)
+  fonte     <- rep(NA_character_, n)
+  status    <- rep("REVISAR", n)
+
+  sem_dados <- vazio(uf_original) & vazio(mun_original) & vazio(cd_original)
+
+  for (i in seq_len(n)) {
+    if (sem_dados[i]) {
+      status[i] <- "SEM_DADOS"
+      next
+    }
+
+    # A) UF específica válida + nome do município válido nessa UF.
+    if (!is.na(uf_pair[i]) && !is.na(cod_nome_pair[i])) {
+      uf_final[i]  <- uf_pair[i]
+      cod_final[i] <- cod_nome_pair[i]
+
+      if (!is.na(codigo_forte[i]) && codigo_forte[i] == cod_nome_pair[i]) {
+        fonte[i]  <- "CODIGO_EXISTENTE_VALIDADO_COM_NOME_E_UF"
+        status[i] <- "OK_CODIGO_NOME_UF"
+      } else if (!is.na(codigo_forte[i]) && codigo_forte[i] != cod_nome_pair[i]) {
+        fonte[i]  <- "NOME_MUNICIPIO_MAIS_UF_CORRIGIU_CODIGO_CONFLITANTE"
+        status[i] <- "CORRIGIDO_CODIGO_POR_NOME_E_UF"
+      } else {
+        fonte[i]  <- "NOME_MUNICIPIO_MAIS_UF"
+        status[i] <- "OK_NOME_E_UF"
+      }
+
+      next
+    }
+
+    # B) UF específica válida + código existente pertence a essa UF.
+    if (!is.na(uf_pair[i]) && isTRUE(forte_compativel_pair[i])) {
+      uf_final[i]  <- uf_pair[i]
+      cod_final[i] <- codigo_forte[i]
+      fonte[i]     <- "CODIGO_EXISTENTE_VALIDADO_COM_UF"
+      status[i]    <- "OK_CD_VALIDADO_COM_UF"
+    
