@@ -135,4 +135,167 @@ localizar_coluna <- function(nomes, candidatos, obrigatoria = TRUE) {
   for (i in seq_along(cand_norm)) {
     idx <- which(nomes_norm == cand_norm[i])
     if (length(idx) > 0) {
-      return(nomes[idx[
+      return(nomes[idx[1]])
+    }
+  }
+
+  if (obrigatoria) {
+    stop(
+      "Não foi localizada nenhuma destas colunas: ",
+      paste(candidatos, collapse = ", ")
+    )
+  }
+
+  NA_character_
+}
+
+# ------------------------------------------------------------------------------
+# 4. SELEÇÃO DOS ARQUIVOS
+# ------------------------------------------------------------------------------
+selecionar_multiplas_bases <- function() {
+
+  if (.Platform$OS.type == "windows") {
+
+    filtros <- matrix(
+      c(
+        "Bases suportadas (*.csv;*.xlsx;*.xls;*.dbf)", "*.csv;*.xlsx;*.xls;*.dbf",
+        "CSV (*.csv)", "*.csv",
+        "Excel (*.xlsx;*.xls)", "*.xlsx;*.xls",
+        "DBF (*.dbf)", "*.dbf",
+        "Todos os arquivos (*.*)", "*.*"
+      ),
+      ncol = 2,
+      byrow = TRUE
+    )
+
+    arquivos <- utils::choose.files(
+      default = "",
+      caption = "Selecione UMA OU MAIS bases DCC",
+      multi = TRUE,
+      filters = filtros,
+      index = 1
+    )
+
+  } else if (
+    requireNamespace("tcltk", quietly = TRUE) &&
+    capabilities("tcltk")
+  ) {
+
+    arquivos <- tcltk::tk_choose.files(
+      caption = "Selecione UMA OU MAIS bases DCC",
+      multi = TRUE,
+      filetypes = "{{Bases suportadas} {.csv .xlsx .xls .dbf}} {{Todos} *}"
+    )
+
+  } else {
+    stop(
+      "Não foi possível abrir um seletor múltiplo de arquivos neste sistema. ",
+      "Execute o script em ambiente gráfico (por exemplo, RStudio no Windows)."
+    )
+  }
+
+  arquivos <- as.character(arquivos)
+  arquivos <- arquivos[nzchar(arquivos)]
+  arquivos <- arquivos[file.exists(arquivos)]
+  arquivos <- unique(normalizePath(arquivos, winslash = "/", mustWork = TRUE))
+
+  if (length(arquivos) == 0) {
+    stop("Nenhuma base foi selecionada.")
+  }
+
+  arquivos
+}
+
+message("------------------------------------------------------------")
+message("SELECIONE UMA OU MAIS BASES DCC")
+message("Use Ctrl ou Shift para selecionar vários arquivos.")
+message("Formatos aceitos: CSV, XLSX, XLS e DBF.")
+message("------------------------------------------------------------")
+Sys.sleep(0.5)
+
+arquivos_base <- selecionar_multiplas_bases()
+
+message("")
+message("Bases selecionadas: ", length(arquivos_base))
+for (i in seq_along(arquivos_base)) {
+  message(sprintf("  [%d] %s", i, basename(arquivos_base[i])))
+}
+
+message("")
+message("------------------------------------------------------------")
+message("SELECIONE UMA ÚNICA VEZ A TABELA MunicipiosEregiaoDeSaude2.csv")
+message("Ela será utilizada para todas as bases selecionadas.")
+message("------------------------------------------------------------")
+Sys.sleep(0.5)
+
+arquivo_ref <- file.choose()
+arquivo_ref <- normalizePath(arquivo_ref, winslash = "/", mustWork = TRUE)
+
+# ------------------------------------------------------------------------------
+# 5. LEITURA DA TABELA DE REFERÊNCIA
+# ------------------------------------------------------------------------------
+cat("\nLendo a tabela de municípios...\n")
+ref_bruta <- ler_csv_flex(arquivo_ref)
+
+col_ref_uf_cod <- localizar_coluna(
+  names(ref_bruta),
+  c("Codigo UF", "Código UF", "CODIGO_UF", "COD_UF")
+)
+
+col_ref_uf_nome <- localizar_coluna(
+  names(ref_bruta),
+  c("UF", "Estado", "Nome UF")
+)
+
+col_ref_mun_cod <- localizar_coluna(
+  names(ref_bruta),
+  c(
+    "CD_MN_RESI", "codigo_ibge", "codigo_ibge_6d",
+    "Codigo Municipio", "Código Município"
+  )
+)
+
+col_ref_mun_nome <- localizar_coluna(
+  names(ref_bruta),
+  c("Municipio", "Município", "nome_municipio", "Nome Municipio")
+)
+
+ref <- ref_bruta %>%
+  transmute(
+    UF_COD   = normalizar_codigo_uf(.data[[col_ref_uf_cod]]),
+    UF_NOME  = as.character(.data[[col_ref_uf_nome]]),
+    UF_NORM  = normalizar_texto(.data[[col_ref_uf_nome]]),
+    MUN_COD  = normalizar_codigo_mun(.data[[col_ref_mun_cod]]),
+    MUN_NOME = as.character(.data[[col_ref_mun_nome]]),
+    MUN_NORM = normalizar_texto(.data[[col_ref_mun_nome]])
+  ) %>%
+  filter(
+    !is.na(UF_COD), !is.na(UF_NORM),
+    !is.na(MUN_COD), !is.na(MUN_NORM)
+  ) %>%
+  distinct(UF_COD, MUN_COD, .keep_all = TRUE)
+
+if (anyDuplicated(ref$MUN_COD) > 0) {
+  stop("A referência possui código municipal duplicado.")
+}
+
+if (anyDuplicated(paste(ref$UF_COD, ref$MUN_NORM, sep = "|")) > 0) {
+  stop("A referência possui município duplicado dentro da mesma UF.")
+}
+
+# ------------------------------------------------------------------------------
+# 6. EXCEÇÕES/VALIDAÇÕES EXPLÍCITAS SOLICITADAS
+# ------------------------------------------------------------------------------
+# IMPORTANTE:
+# As exceções abaixo são SEMPRE dependentes da UF. Elas não são usadas como
+# inferência nacional sem UF, porque alguns nomes têm homônimos.
+#
+# Exemplo:
+# Brejinho/PE = IBGE completo 2602506 -> saída 6 dígitos: 260250
+# Brejinho/RN = IBGE completo 2401800 -> saída 6 dígitos: 240180
+#
+# Campo Grande é outro exemplo de homônimo: a regra 240130 só vale para RN.
+#
+# Florinia é tratado como alias de Florínea/SP (351610), erro de grafia
+# identificado na base de 2023. A correção só é aplicada quando a UF é SP (35)
+# ou quando um fallback territorial permit
