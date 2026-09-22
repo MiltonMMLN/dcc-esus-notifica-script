@@ -864,4 +864,88 @@ obter_apoio_residencia <- function(df) {
     sg_uf
   )
 
-  con
+  conflito_sg_codigo <- (
+    !is.na(sg_uf) &
+    !is.na(uf_res_confirmada) &
+    sg_uf != uf_res_confirmada
+  )
+
+  tibble::tibble(
+    RES_SG_UF = sg_uf,
+    RES_MUN_COD = cod_res,
+    RES_UF_POR_MUNICIPIO = uf_por_cod_res,
+    RES_UF_POR_PREFIXO_CODIGO = uf_por_prefixo_res,
+    RES_UF_CONFIRMADA = uf_res_confirmada,
+    RES_CONFLITO_SG_UF_X_MUNICIPIO = conflito_sg_codigo
+  )
+}
+
+# ------------------------------------------------------------------------------
+# 9. PARES GEOGRÁFICOS
+# ------------------------------------------------------------------------------
+# fallback_residencia:
+# TRUE  -> se UF específica faltar ou conflitar, SG_UF/ID_MN_RESI podem
+#          ser usados SOMENTE para validar o mesmo nome de município.
+# FALSE -> localização de serviço; não usar residência como substituta.
+
+pares <- list(
+  list(
+    uf = "SG_UF_NOT",
+    mun = "ID_MUNICIP",
+    codigo_candidatos = c("CD_MUNICIP"),
+    descricao = "Notificacao",
+    fallback_residencia = TRUE
+  ),
+  list(
+    uf = "SG_UF",
+    mun = "ID_MN_RESI",
+    codigo_candidatos = c("CD_MN_RESI"),
+    descricao = "Residencia",
+    fallback_residencia = FALSE
+  ),
+  list(
+    uf = "UF_NASC",
+    mun = "MUN_NASC",
+    codigo_candidatos = c("CDMUNNASC", "CD_MUN_NASC"),
+    descricao = "Nascimento",
+    fallback_residencia = TRUE
+  ),
+  list(
+    uf = "COUFINF",
+    mun = "COMUNINF",
+    codigo_candidatos = c("CD_COMUNIN"),
+    descricao = "Provavel infeccao",
+    fallback_residencia = TRUE
+  ),
+  list(
+    uf = "UF_UBS_AC",
+    mun = "MUN_UBS_AC",
+    codigo_candidatos = c("CD_MUN_UBS"),
+    descricao = "UBS acompanhamento",
+    fallback_residencia = FALSE
+  ),
+  list(
+    uf = "UF_HOSPESP",
+    mun = "MUN_ESP",
+    codigo_candidatos = c("CD_MUN_ESP"),
+    descricao = "Hospital/Servico especializado",
+    fallback_residencia = FALSE
+  ),
+  list(
+    uf = "UF_RESI_TF",
+    mun = "MN_RESI_TF",
+    codigo_candidatos = c("CDMNRESITF", "CD_MN_RESI_TF"),
+    descricao = "Nova residencia",
+    fallback_residencia = TRUE
+  ),
+  list(
+    uf = "UF_NOV_AC",
+    mun = "MUN_NOV_AC",
+    codigo_candidatos = c("CDMUNNOVAC", "CD_MUN_NOV_AC"),
+    descricao = "Nova UBS",
+    fallback_residencia = FALSE
+  ),
+  list(
+    uf = "ANT_UF_ESP",
+    mun = "ANT_MUN",
+    codi
