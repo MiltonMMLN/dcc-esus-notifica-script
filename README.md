@@ -31,7 +31,11 @@ A rotina considera a documentação técnica da DCC no e-SUS Notifica e as regra
 ```text
 dcc-esus-notifica-script/
 ├── referencias/
-│   └── MunicipiosEregiaoDeSaude2.csv.gz
+│   └── MunicipiosEregiaoDeSaude2/
+│       ├── parte_001.csv
+│       ├── parte_002.csv
+│       ├── ...
+│       └── parte_006.csv
 ├── scripts/
 │   ├── script1_padronizacao.R
 │   ├── script2_duplicidades.R
@@ -48,13 +52,19 @@ dcc-esus-notifica-script/
 
 ## Referência de municípios e Regiões de Saúde
 
-O repositório passa a incluir a tabela de referência utilizada neste fluxo:
+O repositório passa a incluir a tabela de referência utilizada neste fluxo, preservada integralmente e versionada em seis partes CSV:
 
 ```text
-referencias/MunicipiosEregiaoDeSaude2.csv.gz
+referencias/MunicipiosEregiaoDeSaude2/
+├── parte_001.csv
+├── parte_002.csv
+├── parte_003.csv
+├── parte_004.csv
+├── parte_005.csv
+└── parte_006.csv
 ```
 
-Ela foi armazenada compactada em GZIP para reduzir o tamanho do repositório. O conteúdo é CSV separado por `;` e pode ser lido diretamente pelo `readr`.
+A divisão em partes é apenas uma forma de armazenamento no repositório. Cada arquivo repete o mesmo cabeçalho e os scripts combinam as partes automaticamente antes do uso.
 
 Na versão incorporada nesta atualização, a tabela possui:
 
@@ -74,14 +84,16 @@ O arquivo contém dados geográficos/agregados de referência e **não contém r
 
 ### Uso automático
 
-Os Scripts 1, 2.7 e 3 procuram primeiro essa referência dentro do próprio clone do repositório. Se ela for localizada, não é necessário selecioná-la manualmente.
+Os Scripts 1, 2.7 e 3 procuram primeiro a pasta de referência dentro do próprio clone do repositório. Se as partes forem localizadas, elas são ordenadas, combinadas automaticamente e não é necessário selecionar a tabela manualmente.
 
 Se a referência não estiver disponível no diretório esperado, os scripts mantêm o comportamento de fallback e abrem uma janela para seleção manual.
 
 O Script 2.7 utiliza a tabela para validar UF × município, identificar homônimos e reconhecer nomes de municípios únicos no Brasil. O Script 3 utiliza `CD_MN_RESI` e a Região de Saúde para os consolidados por UF.
 
 > [!NOTE]
-> Caso a tabela de municípios/regiões seja atualizada futuramente, recomenda-se registrar a origem, data de atualização e revisar os resultados de validação geográfica antes de substituir este arquivo.
+> O arquivo-fonte utilizado nesta atualização possui SHA-256 `af8ef6af76548bdb32a558419e37e0ecd02c9d5a00a3c3beb4d5e031bf94e64c`.
+>
+> Caso a tabela de municípios/regiões seja atualizada futuramente, recomenda-se registrar a origem, data de atualização e revisar os resultados de validação geográfica antes de substituir as partes versionadas.
 
 ---
 
