@@ -443,4 +443,184 @@ uf_por_prefixo_codigo_municipio <- function(x) {
 }
 
 # ------------------------------------------------------------------------------
-# 8. AP
+# 8. APOIO DA RESIDÊNCIA
+# ------------------------------------------------------------------------------
+# Esta função calcula uma UF de residência "confirmada".
+#
+# Hierarquia:
+#   1) código municipal válido em ID_MN_RESI;
+#   2) código municipal válido em CD_MN_RESI;
+#   3) SG_UF, se válido;
+#   4) nome de ID_MN_RESI + SG_UF, quando possível.
+#
+# Se SG_UF conflitar com um código municipal válido de residência,
+# prevalece a UF pertencente ao código municipal.
+
+obter_apoio_residencia <- function(df) {
+  n <- nrow(df)
+
+  sg_uf <- if ("SG_UF" %in% names(df)) {
+    resolver_uf(df$SG_UF)
+  } else {
+    rep(NA_character_, n)
+  }
+
+  id_mn_raw <- if ("ID_MN_RESI" %in% names(df)) {
+    as.character(df$ID_MN_RESI)
+  } else {
+    rep(NA_character_, n)
+  }
+
+  cd_mn_raw <- if ("CD_MN_RESI" %in% names(df)) {
+    as.character(df$CD_MN_RESI)
+  } else {
+    rep(NA_character_, n)
+  }
+
+  id_mn_cod <- codigo_valido_ref(id_mn_raw)
+  cd_mn_cod <- codigo_valido_ref(cd_mn_raw)
+
+  # Se ID_MN_RESI estiver descritivo, tenta nome + SG_UF.
+  cod_nome_res <- buscar_codigo_nome_uf(id_mn_raw, sg_uf)
+
+  # Se o nome de residência for único no Brasil, também pode ser identificado
+  # sem SG_UF. Isso não usa a tabela de exceções; usa somente a referência.
+  cod_nome_unico_res <- buscar_codigo_nome_unico_nacional(id_mn_raw)
+
+  cod_res <- dplyr::coalesce(
+    id_mn_cod,
+    cd_mn_cod,
+    cod_nome_res,
+    cod_nome_unico_res
+  )
+
+  uf_por_cod_res <- uf_do_codigo(cod_res)
+
+  # Confirmação adicional pela regra estrutural do código municipal:
+  # os 2 primeiros dígitos correspondem ao código da UF.
+  uf_prefixo_id <- uf_por_prefixo_codigo_municipio(id_mn_raw)
+  uf_prefixo_cd <- uf_por_prefixo_codigo_municipio(cd_mn_raw)
+  uf_por_prefixo_res <- dplyr::coalesce(
+    uf_prefixo_id,
+    uf_prefixo_cd
+  )
+
+  # Hierarquia de confirmação da UF de residência:
+  # 1) município de residência reconhecido na referência;
+  # 2) prefixo do código de ID_MN_RESI/CD_MN_RESI;
+  # 3) SG_UF.
+  uf_res_confirmada <- dplyr::coalesce(
+    uf_por_cod_res,
+    uf_por_prefixo_res,
+    sg_uf
+  )
+
+  conflito_sg_codigo <- (
+    !is.na(sg_uf) &
+    !is.na(uf_res_confirmada) &
+    sg_uf != uf_res_confirmada
+  )
+
+  tibble::tibble(
+    RES_SG_UF = sg_uf,
+    RES_MUN_COD = cod_res,
+    RES_UF_POR_MUNICIPIO = uf_por_cod_res,
+    RES_UF_POR_PREFIXO_CODIGO = uf_por_prefixo_res,
+    RES_UF_CONFIRMADA = uf_res_confirmada,
+    RES_CONFLITO_SG_UF_X_MUNICIPIO = conflito_sg_codigo
+  )
+}
+
+# ------------------------------------------------------------------------------
+# 9. PARES GEOGRÁFICOS
+# ------------------------------------------------------------------------------
+# fallback_residencia:
+# TRUE  -> se UF específica faltar ou conflitar, SG_UF/ID_MN_RESI podem
+#          ser usados SOMENTE para validar o mesmo nome de município.
+# FALSE -> localização de serviço; não usar residência como substituta.
+
+pares <- list(
+  list(
+    uf = "SG_UF_NOT",
+    mun = "ID_MUNICIP",
+    codigo_candidatos = c("CD_MUNICIP"),
+    descricao = "Notificacao",
+    fallback_residencia = TRUE
+  ),
+  list(
+    uf = "SG_UF",
+    mun = "ID_MN_RESI",
+    codigo_candidatos = c("CD_MN_RESI"),
+    descricao = "Residencia",
+    fallback_residencia = FALSE
+  ),
+  list(
+    uf = "UF_NASC",
+    mun = "MUN_NASC",
+    codigo_candidatos = c("CDMUNNASC", "CD_MUN_NASC"),
+    descricao = "Nascimento",
+    fallback_residencia = TRUE
+  ),
+  list(
+    uf = "COUFINF",
+    mun = "COMUNINF",
+    codigo_candidatos = c("CD_COMUNIN"),
+    descricao = "Provavel infeccao",
+    fallback_residencia = TRUE
+  ),
+  list(
+    uf = "UF_UBS_AC",
+    mun = "MUN_UBS_AC",
+    codigo_candidatos = c("CD_MUN_UBS"),
+    descricao = "UBS acompanhamento",
+    fallback_residencia = FALSE
+  ),
+  list(
+    uf = "UF_HOSPESP",
+    mun = "MUN_ESP",
+    codigo_candidatos = c("CD_MUN_ESP"),
+    descricao = "Hospital/Servico especializado",
+    fallback_residencia = FALSE
+  ),
+  list(
+    uf = "UF_RESI_TF",
+    mun = "MN_RESI_TF",
+    codigo_candidatos = c("CDMNRESITF", "CD_MN_RESI_TF"),
+    descricao = "Nova residencia",
+    fallback_residencia = TRUE
+  ),
+  list(
+    uf = "UF_NOV_AC",
+    mun = "MUN_NOV_AC",
+    codigo_candidatos = c("CDMUNNOVAC", "CD_MUN_NOV_AC"),
+    descricao = "Nova UBS",
+    fallback_residencia = FALSE
+  ),
+  list(
+    uf = "ANT_UF_ESP",
+    mun = "ANT_MUN",
+    codigo_candidatos = c("CD_ANT_MUN"),
+    descricao = "Nova unidade especializada",
+    fallback_residencia = FALSE
+  )
+)
+
+# ------------------------------------------------------------------------------
+# 10. PROCESSAMENTO DE CADA PAR UF/MUNICÍPIO
+# ------------------------------------------------------------------------------
+auditorias <- list()
+
+processar_par <- function(df, par) {
+  campo_uf  <- par$uf
+  campo_mun <- par$mun
+
+  if (!(campo_uf %in% names(df)) || !(campo_mun %in% names(df))) {
+    message(
+      "Ignorado: ", par$descricao,
+      " (ausência de ", campo_uf, " ou ", campo_mun, ")."
+    )
+    return(df)
+  }
+
+  campo_cd <- par$codigo_candidatos[
+    par$codigo_candidatos 
