@@ -102,9 +102,11 @@ Realiza a preparação inicial da base, incluindo:
 - separação de comorbidades;
 - geração de CSV e DBF.
 
-### Observação sobre a referência municipal
+### Referência municipal
 
-A versão histórica do Script 1 espera uma tabela com colunas equivalentes a:
+O Script 1 foi compatibilizado com os dois layouts de referência usados no fluxo.
+
+Layout histórico:
 
 ```text
 nome_municipio
@@ -112,7 +114,7 @@ uf
 codigo_ibge
 ```
 
-O Script 2.7 foi atualizado para reconhecer diretamente a estrutura da referência atualmente utilizada, incluindo:
+Layout atualmente utilizado em `MunicipiosEregiaoDeSaude2.csv`:
 
 ```text
 Codigo UF
@@ -121,7 +123,7 @@ CD_MN_RESI
 Municipio
 ```
 
-Caso a referência usada no Script 1 mude, a leitura dessa etapa deve ser revisada antes da execução.
+A leitura localiza colunas equivalentes e mantém o código municipal em seis dígitos para o fluxo SINAN/TabNet.
 
 ---
 
@@ -366,11 +368,11 @@ Gera planilhas por UF com situações destinadas à qualificação, incluindo:
 - transferências entre UFs;
 - Região de Saúde de residência.
 
-### Ponto de atenção identificado na revisão de 22/09/2026
+### Ajuste de compatibilidade identificado na revisão de 22/09/2026
 
-A versão atualmente existente do Script 3 contém chamadas para `apply_renames()`, mas a função não está definida no próprio arquivo. Isso deve ser corrigido/testado em uma revisão específica do Script 3 antes de considerá-lo tecnicamente fechado.
+A revisão identificou que o Script 3 chamava `apply_renames()` sem definir a função no próprio arquivo. Foi incluída uma implementação neutra (`df -> df`) apenas para impedir a interrupção por função ausente, sem alterar nomes de variáveis nem a metodologia epidemiológica do consolidado.
 
-Como o Script 3 não fez parte do teste funcional realizado para a atualização do TabNet, ele não foi alterado nesta atualização apenas para evitar mudança não validada no relatório por UF.
+As regras e os filtros do Script 3 não foram modificados nesta atualização.
 
 ---
 
@@ -380,11 +382,13 @@ A revisão do repositório identificou os seguintes pontos importantes:
 
 1. **Script 2.6 × Script 3** — o Script 2.6 converte categorias textuais para números, enquanto o Script 3 ainda filtra várias categorias em formato textual. Portanto, a sequência correta é executar o Script 3 antes do 2.6.
 
-2. **Script 1 × referência municipal atual** — a leitura da referência no Script 1 segue o layout histórico. O Script 2.7 já aceita o layout atual de `MunicipiosEregiaoDeSaude2.csv`.
+2. **Script 1 × referência municipal atual** — o Script 1 foi compatibilizado com o layout histórico e com o layout atual de `MunicipiosEregiaoDeSaude2.csv`.
 
 3. **Script 2** — o bloqueio por UF + município + data de nascimento melhora desempenho, mas pode perder pares que tenham inconsistência justamente nesses campos.
 
 4. **Scripts 2.5 e 3** — o relacionamento DCC × DCA usa abordagem probabilística e deve continuar sujeito a revisão epidemiológica.
+
+5. **Script 2.7** — a inferência de município por nome único depende da completude e atualização da tabela municipal selecionada. Municípios homônimos continuam exigindo confirmação territorial.
 
 ---
 
