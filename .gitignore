@@ -48,15 +48,25 @@ po/*~
 # RStudio Connect folder
 rsconnect/
 
-# Dados e resultados de vigilância - não versionar
-*.csv
-*.xlsx
-*.xls
-*.dbf
-*.dbc
-*.zip
+
+# DCC - bases e saídas geradas
+*-Padronizado.csv
+*-Padronizado.dbf
+*-Duplicadas_Processado.csv
+*-Duplicadas_Processado.xlsx
+*-SomenteDuplicatas.csv
+*-SomenteDuplicatas.xlsx
+*_Ajustado.xlsx
+*_Ajustado.dbf
+*_TabnetBD.csv
+*_TabnetBD.xlsx
+*_TabnetBD.dbf
+
+# Auditorias e produtos com dados
 Auditoria_*/
 DCC_vs_DCA/
 consolidado_por_uf/
-*_TabnetBD.*
 
+# Arquivos comuns de bases locais
+*.dbc
+*.dbf~
