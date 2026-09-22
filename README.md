@@ -64,6 +64,8 @@ dcc-esus-notifica-script/
 │   ├── script1_padronizacao.R
 │   ├── script2_duplicidades.R
 │   ├── script2_5_dcc_vs_dca.R
+│   ├── script2_6_substituir_categorias.R
+│   ├── script2_7_normalizacao_ibge_tabnet.R
 │   └── script3_consolidado_por_uf.R
 ├── README.md
 ├── LICENSE
@@ -74,16 +76,17 @@ Arquivos de entrada, bases processadas e resultados devem permanecer fora do con
 
 ---
 
-## Fluxo recomendado
+## Fluxos recomendados
+
+Há dois fluxos relacionados, mas com finalidades diferentes.
+
+### A. Qualificação e análise técnica — ambiente restrito
 
 ```text
 Base bruta DCC
        │
        ▼
 Script 1 — Padronização
-       │
-       ▼
-Base DCC padronizada
        │
        ▼
 Script 2 — Duplicidades no DCC
@@ -96,14 +99,42 @@ Script 3 — Consolidação por UF
 uso restrito
 ```
 
-### Sequência
-
 1. Execute o **Script 1** para padronizar a base bruta.
 2. Execute o **Script 2** para identificar possíveis duplicidades dentro da base de DCC.
 3. Execute o **Script 2.5**, quando houver autorização, para analisar possíveis correspondências entre DCC e DCA.
 4. Execute o **Script 3**, quando houver autorização, para gerar os consolidados por UF.
 
 O Script 3 realiza novamente o cruzamento entre DCC e DCA durante a consolidação. Portanto, ele não depende obrigatoriamente do arquivo de saída do Script 2.5.
+
+### B. Preparação para transparência ativa / TabNet BD
+
+Após a qualificação técnica da base:
+
+```text
+Base DCC qualificada
+       │
+       ▼
+Script 2.6 — Substituição de categorias por códigos
+       │
+       ▼
+Script 2.7 — Normalização geográfica IBGE
+       │
+       ├── UF em 2 dígitos
+       ├── município em 6 dígitos
+       ├── auditoria geográfica
+       └── saída *_TabnetBD
+       │
+       ▼
+Seleção do layout / anonimização / validação final
+       │
+       ▼
+DBF/DBC de disponibilização
+```
+
+> [!IMPORTANT]
+> Os Scripts **2.6** e **2.7** são etapas de preparação da base e **não realizam, por si só, a anonimização completa**. A base nominal continua sujeita às regras institucionais de proteção de dados e à seleção dos campos destinados à disponibilização.
+>
+> O **Script 3 deve ser executado antes do Script 2.6**. O Script 3 utiliza categorias descritivas como "Sim", "Não", "Em aberto", "1º Trimestre" etc.; depois do Script 2.6 essas categorias passam a códigos numéricos.
 
 ---
 
@@ -473,6 +504,163 @@ Por conter dados individualizados, essa saída não pode ser publicada ou adicio
 
 ---
 
+## 2.6. Substituição de categorias por códigos
+
+Arquivo:
+
+```text
+scripts/script2_6_substituir_categorias.R
+```
+
+### Objetivo
+
+Adequar categorias textuais da base DCC aos códigos utilizados no dicionário da base preparada para transparência ativa e TabNet BD.
+
+Entre os campos tratados estão:
+
+```text
+ID_CPF
+ID_ESTRANG
+CS_SEXO
+CS_RACA
+COMU_TRAD
+CS_ESCOL_N
+CS_ZONA
+MO_SUSPEIT
+CS_GESTANT
+EIE_IGG
+IFI_IGG
+HAI_IGG
+QUIMIO_IGG
+PCR
+OUTRO_POSI
+AC_NOT
+HOSP_ESP
+FORMA
+ST_ENCERRA
+```
+
+O script também trata exames complementares, comorbidades, tratamento, reações adversas, busca ativa e transferências.
+
+Para reações adversas a benznidazol e nifurtimox, quando o campo principal informa ausência de reações, os campos derivados correspondentes são preenchidos com o código definido pela regra técnica.
+
+O Script 2.6 também padroniza alguns nomes de variáveis para compatibilidade com DBF, incluindo:
+
+```text
+CD_MUN_NASC   -> CDMUNNASC
+CD_MN_RESI_TF -> CDMNRESITF
+CD_MUN_NOV_AC -> CDMUNNOVAC
+DT_DIGITACAO  -> DT_DIGITAC
+```
+
+### Entrada e saída
+
+A versão atual aceita uma base por execução em CSV ou XLSX e gera:
+
+```text
+<nome-da-base>_Ajustado.xlsx
+<nome-da-base>_Ajustado.dbf
+```
+
+As datas são tratadas como campos de data no DBF sempre que possível.
+
+---
+
+## 2.7. Normalização geográfica IBGE para TabNet BD
+
+Arquivo:
+
+```text
+scripts/script2_7_normalizacao_ibge_tabnet.R
+```
+
+### Objetivo
+
+Normalizar os pares UF/município usados na base DCC, convertendo:
+
+- UF para código IBGE de **2 dígitos**;
+- município para código de **6 dígitos** utilizado no fluxo SINAN/TabNet.
+
+O script aceita múltiplas bases na mesma execução, o que permite processar, por exemplo, bases anuais de 2023, 2024 e 2025 de uma só vez.
+
+### Pares geográficos tratados
+
+| Contexto | UF | Município | Campo auxiliar de município |
+|---|---|---|---|
+| Notificação | `SG_UF_NOT` | `ID_MUNICIP` | `CD_MUNICIP` |
+| Residência | `SG_UF` | `ID_MN_RESI` | `CD_MN_RESI` |
+| Nascimento | `UF_NASC` | `MUN_NASC` | `CDMUNNASC` / `CD_MUN_NASC` |
+| Provável infecção | `COUFINF` | `COMUNINF` | `CD_COMUNIN` |
+| UBS de acompanhamento | `UF_UBS_AC` | `MUN_UBS_AC` | `CD_MUN_UBS` |
+| Hospital/serviço especializado | `UF_HOSPESP` | `MUN_ESP` | `CD_MUN_ESP` |
+| Nova residência | `UF_RESI_TF` | `MN_RESI_TF` | `CDMNRESITF` / `CD_MN_RESI_TF` |
+| Nova UBS | `UF_NOV_AC` | `MUN_NOV_AC` | `CDMUNNOVAC` / `CD_MUN_NOV_AC` |
+| Nova unidade especializada | `ANT_UF_ESP` | `ANT_MUN` | `CD_ANT_MUN` |
+
+### Regras de validação
+
+A prioridade é validar o **par UF + município**. O script:
+
+- utiliza código municipal existente somente quando compatível com a UF;
+- usa nome de município + UF com correspondência exata após normalização de acentos, caixa e espaços;
+- não utiliza pareamento aproximado por similaridade;
+- quando o município possui nome único no Brasil na tabela de referência, pode identificar município e UF mesmo se a UF estiver ausente;
+- quando há homônimos, exige confirmação da UF;
+- em contextos permitidos, pode utilizar `SG_UF`, `ID_MN_RESI` e `CD_MN_RESI` como apoio territorial;
+- utiliza os dois primeiros dígitos do código municipal como apoio para confirmação da UF;
+- não herda automaticamente a residência para campos de UBS, hospital ou serviço especializado.
+
+Há ainda regras explícitas para inconsistências históricas conhecidas, sempre condicionadas à UF correspondente, incluindo:
+
+```text
+GO | Alto Horizonte       -> 520055
+AL | Arapiraca            -> 270030
+RN | Augusto Severo       -> 240130
+RN | Campo Grande         -> 240130
+BA | Barreiras            -> 290320
+MG | Bonfinopolis de Minas-> 310820
+GO | Brazabrantes         -> 520360
+SP | Florinia             -> 351610  (alias de Florínea/SP)
+PE | Brejinho             -> 260250
+RN | Brejinho             -> 240180
+```
+
+A regra de `Florinia` corresponde a erro de grafia identificado na base de 2023 e só é aplicada quando São Paulo é confirmado como UF.
+
+### Tabela de referência
+
+O script foi preparado para `MunicipiosEregiaoDeSaude2.csv` e reconhece colunas equivalentes a:
+
+```text
+Codigo UF
+UF
+CD_MN_RESI
+Municipio
+```
+
+### Saídas
+
+Para cada base selecionada são produzidas, na pasta original:
+
+```text
+<nome-da-base>_TabnetBD.csv
+<nome-da-base>_TabnetBD.xlsx
+<nome-da-base>_TabnetBD.dbf
+```
+
+A auditoria fica separada em:
+
+```text
+Auditoria_<nome-da-base>/
+├── <nome-da-base>_AUDITORIA_IBGE.csv
+├── <nome-da-base>_RESUMO_IBGE.csv
+└── <nome-da-base>_VALIDACAO_FINAL_IBGE.csv
+```
+
+Registros classificados com situações de conflito, UF não reconhecida, município não localizado ou ausência de confirmação devem ser revisados antes da disponibilização.
+
+---
+
 ## 3. Consolidação por Unidade Federativa
 
 Arquivo:
@@ -569,7 +757,7 @@ source("scripts/script2_duplicidades.R")
 
 ### Execução interativa
 
-Os scripts utilizam `file.choose()`.
+Os scripts utilizam seletores interativos de arquivos. A maioria usa `file.choose()`; o Script 2.7 utiliza seleção múltipla de arquivos no Windows e, quando disponível, via Tcl/Tk em outros sistemas.
 
 Por esse motivo, foram desenvolvidos prioritariamente para execução interativa em ambiente com interface gráfica, como o RStudio.
 
@@ -617,6 +805,8 @@ Antes de utilizar uma nova versão, recomenda-se verificar:
 - preservação de zeros à esquerda;
 - padrão das datas;
 - correspondência dos códigos de municípios;
+- consistência entre UF e município nos campos geográficos;
+- revisão dos arquivos de auditoria do Script 2.7;
 - criação das variáveis derivadas;
 - abertura do DBF no TabWin;
 - quantidade de grupos duplicados;
@@ -674,6 +864,8 @@ Get-FileHash "DCC.csv" -Algorithm SHA256
 - Datas inválidas ou não reconhecidas podem ser convertidas em valores ausentes.
 - Os scripts dependem da presença e do nome esperado de determinadas colunas.
 - Mudanças no modelo de dados do e-SUS Notifica ou do SINAN podem exigir atualização do código.
+- O Script 2 utiliza bloqueio por UF, município e data de nascimento; divergências nesses campos podem impedir a comparação de registros potencialmente duplicados.
+- A inferência de município por nome único no Script 2.7 depende da qualidade e atualidade da tabela de referência selecionada.
 - Os resultados automatizados não substituem avaliação epidemiológica.
 
 ---
