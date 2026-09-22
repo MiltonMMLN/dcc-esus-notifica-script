@@ -1359,4 +1359,22 @@ for (i in seq_len(nrow(resultado_geral))) {
   if (GERAR_DBF) {
     cat(
       "    DBF: ",
-     
+      resultado_geral$DBF_FINAL[i],
+      "\n",
+      sep = ""
+    )
+  }
+}
+
+cat(
+  "\nRevisar antes da disponibilização todos os registros com STATUS contendo ",
+  "NAO_RECONHECIDA, SEM_CONFIRMACAO, NAO_LOCALIZADO ou REVISAR.\n",
+  sep = ""
+)
+
+cat(
+  "Regra de nome único nacional ativa: municípios sem homônimo na tabela de ",
+  "referência podem ter município e UF inferidos pelo próprio nome. ",
+  "Exceções manuais continuam exigindo confirmação de UF.\n",
+  sep = ""
+)
