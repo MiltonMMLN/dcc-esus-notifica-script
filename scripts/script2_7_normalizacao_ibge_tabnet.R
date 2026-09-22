@@ -1091,4 +1091,66 @@ processar_par <- function(df, par) {
       cod_final[i] <- codigo_forte[i]
       fonte[i]     <- "CODIGO_EXISTENTE_VALIDADO_COM_UF"
       status[i]    <- "OK_CD_VALIDADO_COM_UF"
-    
+      next
+    }
+
+    # C) UF específica vazia/não reconhecida + código municipal forte válido.
+    #    O código municipal informa sua própria UF.
+    if (is.na(uf_pair[i]) && !is.na(codigo_forte[i]) && !is.na(uf_codigo_forte[i])) {
+      # Se houver nome, exige que ele também corresponda ao código/UF,
+      # salvo quando o campo município já for o próprio código.
+      nome_eh_codigo <- !is.na(mun_como_cod[i])
+
+      cod_validacao_nome <- buscar_codigo_nome_uf(
+        mun_original[i],
+        uf_codigo_forte[i]
+      )
+
+      if (nome_eh_codigo || vazio(mun_original[i]) ||
+          (!is.na(cod_validacao_nome) && cod_validacao_nome == codigo_forte[i])) {
+
+        uf_final[i]  <- uf_codigo_forte[i]
+        cod_final[i] <- codigo_forte[i]
+        fonte[i]     <- "UF_DERIVADA_DO_CODIGO_MUNICIPAL"
+        status[i]    <- "OK_UF_DERIVADA_DO_CODIGO"
+        next
+      }
+    }
+
+    # D) UF específica conflita com código municipal, mas código + nome concordam.
+    if (!is.na(uf_pair[i]) &&
+        !is.na(codigo_forte[i]) &&
+        !is.na(uf_codigo_forte[i]) &&
+        uf_codigo_forte[i] != uf_pair[i]) {
+
+      cod_nome_na_uf_codigo <- buscar_codigo_nome_uf(
+        mun_original[i],
+        uf_codigo_forte[i]
+      )
+
+      nome_eh_codigo <- !is.na(mun_como_cod[i])
+
+      if (nome_eh_codigo ||
+          (!is.na(cod_nome_na_uf_codigo) &&
+           cod_nome_na_uf_codigo == codigo_forte[i])) {
+
+        uf_final[i]  <- uf_codigo_forte[i]
+        cod_final[i] <- codigo_forte[i]
+        fonte[i]     <- "CODIGO_MUNICIPAL_MAIS_NOME_CORRIGIU_UF"
+        status[i]    <- "CORRIGIDO_UF_POR_CODIGO_E_NOME"
+        next
+      }
+    }
+
+    # E) NOME NACIONALMENTE ÚNICO.
+    #    Se o nome normalizado existe em apenas um município na referência
+    #    nacional, não é necessário depender da UF para identificar o município.
+    #
+    #    Exemplos esperados pela própria referência:
+    #      Padre Bernardo  -> GO / 521560
+    #      Natal           -> RN / 240810
+    #      Coracao de Jesus-> MG / 311880
+    #
+    #    Esta regra NÃO usa as exceções manuais. Assim, nomes como Campo Grande
+    #    e Brejinho continuam exigindo confirmação de UF por terem homônimos.
+    if (!is.na(cod_nome_unico[i]) && !i
